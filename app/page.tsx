@@ -9,6 +9,8 @@ import { ChatSidebar, type ChatSession } from "@/components/chat-sidebar"
 import { SettingsPanel } from "@/components/settings-panel"
 import { CheckpointSidebar } from "@/components/checkpoint-sidebar"
 import { ChatInput } from "@/components/chat-input"
+import { cn } from "@/lib/utils"
+import { useTypingSpeed } from "@/hooks/use-typing-speed"
 import { Plus } from "lucide-react"
 
 export default function Home() {
@@ -25,11 +27,17 @@ export default function Home() {
   // Model settings
   const [currentModel, setCurrentModel] = useState("llama-3.3-70b-versatile")
 
+  // GenUI: Track the mood that was active when each user message was sent
+  const [messageMoods, setMessageMoods] = useState<Record<string, "slow" | "neutral" | "fast">>({})
+
   // Checkpoint state
   const [checkpointedIds, setCheckpointedIds] = useState<Set<string>>(
     new Set()
   )
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null)
+
+  // GenUI: Typing speed tracking
+  const { mood: typingMood, handleKeystroke, reset: resetTypingSpeed } = useTypingSpeed()
 
   // Chat ref for scrolling
   const chatContainerRef = useRef<HTMLDivElement>(null)
@@ -52,6 +60,19 @@ export default function Home() {
   })
 
   const isLoading = status === "streaming" || status === "submitted"
+
+  // Tag new user messages with the mood that was active when they were sent
+  useEffect(() => {
+    const userMessages = messages.filter((m) => m.role === "user")
+    if (userMessages.length === 0) return
+    const lastUser = userMessages[userMessages.length - 1]
+    if (!messageMoods[lastUser.id]) {
+      setMessageMoods((prev) => ({
+        ...prev,
+        [lastUser.id]: pendingMoodRef.current,
+      }))
+    }
+  }, [messages, messageMoods])
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -112,14 +133,21 @@ export default function Home() {
     setCurrentSessionId(newId)
     setMessages([])
     setCheckpointedIds(new Set())
+    setMessageMoods({})
     setInput("")
-  }, [messages, currentSessionId, setMessages])
+    resetTypingSpeed()
+  }, [messages, currentSessionId, setMessages, resetTypingSpeed])
+
+  // Ref to snapshot the mood right before sending
+  const pendingMoodRef = useRef<"slow" | "neutral" | "fast">("neutral")
 
   const handleSend = useCallback(() => {
     if (!input.trim() || isLoading) return
+    pendingMoodRef.current = typingMood
     sendMessage({ text: input })
     setInput("")
-  }, [input, isLoading, sendMessage])
+    resetTypingSpeed()
+  }, [input, isLoading, sendMessage, resetTypingSpeed, typingMood])
 
   const handleSwitchView = useCallback(
     (view: "chats" | "settings") => {
@@ -154,10 +182,26 @@ export default function Home() {
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
-      {/* Background gradient */}
-      <div className="fixed inset-0 pointer-events-none">
-        <div className="absolute top-0 left-[20%] w-[500px] h-[500px] bg-primary/10 rounded-full blur-[120px]" />
-        <div className="absolute bottom-0 right-[20%] w-[400px] h-[400px] bg-primary/5 rounded-full blur-[100px]" />
+      {/* Background gradient -- shifts hue with typing mood */}
+      <div className="fixed inset-0 pointer-events-none transition-all duration-700 ease-out">
+        <div
+          className={`absolute top-0 left-[20%] w-[500px] h-[500px] rounded-full blur-[120px] transition-colors duration-700 ease-out ${
+            typingMood === "slow"
+              ? "bg-indigo-500/15"
+              : typingMood === "fast"
+                ? "bg-pink-500/15"
+                : "bg-primary/10"
+          }`}
+        />
+        <div
+          className={`absolute bottom-0 right-[20%] w-[400px] h-[400px] rounded-full blur-[100px] transition-colors duration-700 ease-out ${
+            typingMood === "slow"
+              ? "bg-indigo-400/8"
+              : typingMood === "fast"
+                ? "bg-pink-400/8"
+                : "bg-primary/5"
+          }`}
+        />
       </div>
 
       {/* Sidebar */}
@@ -187,14 +231,28 @@ export default function Home() {
       {/* Main content */}
       <div className="flex-1 flex flex-col h-screen relative z-10 pr-5">
         {/* Header */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-border/50 bg-card/30 backdrop-blur-xl">
+        <header className={cn(
+          "flex items-center justify-between px-6 py-4 border-b bg-card/30 backdrop-blur-xl transition-colors duration-700 ease-out",
+          typingMood === "slow"
+            ? "border-indigo-500/30"
+            : typingMood === "fast"
+              ? "border-pink-500/30"
+              : "border-border/50"
+        )}>
           <h1 className="text-base font-bold tracking-tight text-foreground">
             Agentic Workspace
           </h1>
           <div className="flex items-center gap-3">
             <button
               onClick={handleNewChat}
-              className="flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold bg-primary text-primary-foreground hover:bg-primary/90 hover:-translate-y-px hover:shadow-lg hover:shadow-primary/40 active:translate-y-0 transition-all duration-200"
+              className={cn(
+                "flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-semibold text-primary-foreground hover:-translate-y-px hover:shadow-lg active:translate-y-0 transition-all duration-500 ease-out",
+                typingMood === "slow"
+                  ? "bg-indigo-500 hover:shadow-indigo-500/40"
+                  : typingMood === "fast"
+                    ? "bg-pink-500 hover:shadow-pink-500/40"
+                    : "bg-primary hover:shadow-primary/40"
+              )}
             >
               <Plus className="h-4 w-4" />
               New Chat
@@ -234,6 +292,7 @@ export default function Home() {
                     <ChatMessage
                       message={message}
                       isStreaming={isLastAssistant}
+                      mood={message.role === "user" ? messageMoods[message.id] || "neutral" : "neutral"}
                     />
                     {message.role === "assistant" && (
                       <button
@@ -267,6 +326,8 @@ export default function Home() {
           onSend={handleSend}
           onStop={stop}
           isLoading={isLoading}
+          typingMood={typingMood}
+          onKeystroke={handleKeystroke}
         />
       </div>
 

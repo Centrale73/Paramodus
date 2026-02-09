@@ -2,6 +2,7 @@
 
 import { cn } from "@/lib/utils"
 import type { UIMessage } from "ai"
+import type { TypingMood } from "@/hooks/use-typing-speed"
 import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 
@@ -13,12 +14,19 @@ function getMessageText(message: UIMessage): string {
     .join("")
 }
 
+const userBubbleMoodMap: Record<TypingMood, string> = {
+  slow: "bg-gradient-to-br from-indigo-500 to-indigo-400 shadow-indigo-500/25",
+  neutral: "bg-primary shadow-primary/25",
+  fast: "bg-gradient-to-br from-pink-500 to-rose-400 shadow-pink-500/25",
+}
+
 interface ChatMessageProps {
   message: UIMessage
   isStreaming?: boolean
+  mood?: TypingMood
 }
 
-export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
+export function ChatMessage({ message, isStreaming, mood = "neutral" }: ChatMessageProps) {
   const text = getMessageText(message)
   const isUser = message.role === "user"
 
@@ -33,7 +41,7 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
         className={cn(
           "px-5 py-3.5 rounded-2xl text-[0.95rem] leading-relaxed break-words",
           isUser
-            ? "bg-primary text-primary-foreground rounded-br-sm shadow-lg shadow-primary/25"
+            ? cn("text-primary-foreground rounded-br-sm shadow-lg", userBubbleMoodMap[mood])
             : "bg-card/50 text-foreground rounded-bl-sm border border-border/50 backdrop-blur-xl"
         )}
       >

@@ -3,6 +3,19 @@
 import { cn } from "@/lib/utils"
 import { ArrowUp, Square } from "lucide-react"
 import { useRef, useEffect } from "react"
+import type { TypingMood } from "@/hooks/use-typing-speed"
+
+const moodBorderMap: Record<TypingMood, string> = {
+  slow: "border-indigo-400/60 shadow-indigo-500/20",
+  neutral: "border-primary/50 shadow-primary/10",
+  fast: "border-pink-400/60 shadow-pink-500/20",
+}
+
+const moodButtonMap: Record<TypingMood, string> = {
+  slow: "bg-indigo-500 hover:shadow-indigo-500/40",
+  neutral: "bg-primary hover:shadow-primary/40",
+  fast: "bg-pink-500 hover:shadow-pink-500/40",
+}
 
 interface ChatInputProps {
   input: string
@@ -10,6 +23,8 @@ interface ChatInputProps {
   onSend: () => void
   onStop: () => void
   isLoading: boolean
+  typingMood?: TypingMood
+  onKeystroke?: () => void
 }
 
 export function ChatInput({
@@ -18,6 +33,8 @@ export function ChatInput({
   onSend,
   onStop,
   isLoading,
+  typingMood = "neutral",
+  onKeystroke,
 }: ChatInputProps) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -26,6 +43,11 @@ export function ChatInput({
   }, [])
 
   function handleKeyDown(e: React.KeyboardEvent) {
+    // Track typing speed for any character key or backspace
+    if (e.key.length === 1 || e.key === "Backspace") {
+      onKeystroke?.()
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
       if (isLoading) return
@@ -47,9 +69,11 @@ export function ChatInput({
       <div
         className={cn(
           "flex items-end gap-2 rounded-[1.75rem] px-2 py-1.5",
-          "bg-card/50 backdrop-blur-xl border border-border/50",
-          "transition-all duration-200",
-          "focus-within:border-primary/50 focus-within:shadow-lg focus-within:shadow-primary/10"
+          "bg-card/50 backdrop-blur-xl border",
+          "transition-all duration-500 ease-out",
+          input.trim()
+            ? `shadow-lg ${moodBorderMap[typingMood]}`
+            : "border-border/50"
         )}
       >
         <textarea
@@ -85,12 +109,13 @@ export function ChatInput({
             disabled={!input.trim()}
             className={cn(
               "flex items-center justify-center w-11 h-11 rounded-full",
-              "bg-primary text-primary-foreground",
-              "hover:scale-105 hover:shadow-lg hover:shadow-primary/40",
+              "text-primary-foreground",
+              "hover:scale-105 hover:shadow-lg",
               "active:scale-95",
-              "transition-all duration-200",
+              "transition-all duration-500 ease-out",
               "disabled:opacity-40 disabled:hover:scale-100 disabled:hover:shadow-none",
-              "shrink-0"
+              "shrink-0",
+              moodButtonMap[typingMood]
             )}
             title="Send message"
           >
@@ -98,6 +123,21 @@ export function ChatInput({
           </button>
         )}
       </div>
+      {/* Mood indicator */}
+      {input.trim() && typingMood !== "neutral" && (
+        <div className="flex justify-center mt-2">
+          <span
+            className={cn(
+              "text-[0.65rem] font-medium tracking-wider uppercase px-3 py-0.5 rounded-full transition-all duration-500",
+              typingMood === "slow"
+                ? "text-indigo-400/70 bg-indigo-500/10"
+                : "text-pink-400/70 bg-pink-500/10"
+            )}
+          >
+            {typingMood === "slow" ? "thoughtful" : "rapid"}
+          </span>
+        </div>
+      )}
     </div>
   )
 }
