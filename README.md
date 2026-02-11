@@ -1,6 +1,6 @@
-# Agentic Workspace
+# Paramodus Workspace
 
-**Agentic Workspace** is a desktop-native AI assistant that brings together multiple LLM providers and a robust, local RAG (Retrieval-Augmented Generation) system into a single, private interface.
+**Paramodus** is a desktop-native AI assistant that brings together multiple LLM providers and a robust, local RAG (Retrieval-Augmented Generation) system into a single, private interface.
 
 Built with **Agno** (formerly PhiData) and **pywebview**, it runs locally as a native application, allowing you to chat with your documents using your preferred AI models without relying on browser tabs or complex cloud vector stores.
 
