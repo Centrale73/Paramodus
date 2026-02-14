@@ -7,10 +7,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from database import init_db
-from api.bridge import ApiBridge
+from proactive_bridge import ProactiveApiBridge as ApiBridge
+from proactive_database import init_proactive_database_sync
 
 if __name__ == '__main__':
     init_db()
+    init_proactive_database_sync()
     api = ApiBridge()
     
     base_path = getattr(sys, '_MEIPASS', os.path.abspath("."))

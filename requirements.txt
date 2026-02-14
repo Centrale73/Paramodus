@@ -13,3 +13,5 @@ pypdf
 lancedb
 tantivy
 fastembed
+apscheduler
+aiosqlite
