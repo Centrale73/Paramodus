@@ -313,8 +313,11 @@ class BonsaiManager:
                 "--port",     str(SERVER_PORT),
                 "--ctx-size", str(context_length),
                 "-ngl",       str(n_gpu_layers),
-                "--no-mmap",              # safer on Windows / spinning disks
-                "--log-disable",          # silence stdout noise
+                # NOTE: do NOT pass --no-mmap here.
+                # --no-mmap forces the entire GGUF (~4.6 GB) into physical RAM
+                # at startup, which is slow and can fail on memory-constrained
+                # machines.  The default (mmap) reads pages on demand and is
+                # both faster to start and easier on RAM.
             ]
 
             log_path = os.path.join(APP_DATA, "llama_server.log")
