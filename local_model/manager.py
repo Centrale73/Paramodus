@@ -65,10 +65,10 @@ MODELS: dict[str, dict] = {
     },
     "bonsai-8b-q4": {
         "repo_id":     "bartowski/prism-ml_Bonsai-8B-unpacked-GGUF",
-        "filename":    "Bonsai-8B-unpacked-Q4_K_M.gguf",
+        "filename":    "prism-ml_Bonsai-8B-unpacked-Q4_K_M.gguf",
         "hf_url":      (
             "https://huggingface.co/bartowski/prism-ml_Bonsai-8B-unpacked-GGUF"
-            "/resolve/main/Bonsai-8B-unpacked-Q4_K_M.gguf"
+            "/resolve/main/prism-ml_Bonsai-8B-unpacked-Q4_K_M.gguf"
         ),
         "size_gb":     4.6,
         "quant":       "Q4_K_M (unpacked, standard llama.cpp)",
@@ -178,8 +178,10 @@ class BonsaiManager:
         """
         Download the specified model GGUF from HuggingFace.
 
-        Supports HTTP Range resume — if the download is interrupted, restarting
-        will pick up where it left off.
+        Uses huggingface_hub.hf_hub_download() which correctly handles
+        HuggingFace Xet storage, CDN redirects, and automatic retries.
+        Progress is reported by polling the in-progress file size from a
+        background thread (hf_hub_download is synchronous).
 
         progress_cb(percent: float, message: str)
           percent: 0-100 on progress, -1.0 on error
@@ -190,58 +192,62 @@ class BonsaiManager:
                     progress_cb(100.0, "Already downloaded.")
                 return True
 
-            info      = MODELS[model_key]
-            url       = info["hf_url"]
-            dest_path = self.get_model_path(model_key)
-            tmp_path  = dest_path + ".partial"
+            from huggingface_hub import hf_hub_download
 
-            # Determine how many bytes we already have (resume support)
-            already_downloaded = os.path.getsize(tmp_path) if os.path.isfile(tmp_path) else 0
-            headers = {"Range": f"bytes={already_downloaded}-"} if already_downloaded > 0 else {}
+            info       = MODELS[model_key]
+            dest_path  = self.get_model_path(model_key)
+            total_bytes = int(info["size_gb"] * 1024 ** 3)
+
+            if progress_cb:
+                progress_cb(0.0, f"Connecting to HuggingFace… ({info['size_gb']:.1f} GB)")
+
+            # hf_hub_download is blocking; we poll the in-progress cache file
+            # from a side thread to report live progress.
+            _stop = threading.Event()
+
+            def _poll_progress():
+                """
+                hf_hub_download writes to a .incomplete temp file inside
+                the local_dir while downloading.  We find and stat it.
+                """
+                while not _stop.is_set():
+                    try:
+                        # Look for any partial file in MODELS_DIR
+                        for fname in os.listdir(MODELS_DIR):
+                            if fname.endswith(".incomplete") or fname.endswith(".part"):
+                                fpath = os.path.join(MODELS_DIR, fname)
+                                size  = os.path.getsize(fpath)
+                                if size > 0 and total_bytes > 0 and progress_cb:
+                                    pct      = min(size / total_bytes * 100, 99.0)
+                                    done_gb  = size / (1024 ** 3)
+                                    total_gb = total_bytes / (1024 ** 3)
+                                    progress_cb(
+                                        pct,
+                                        f"Downloading… {done_gb:.2f} / {total_gb:.2f} GB"
+                                    )
+                                break
+                    except OSError:
+                        pass
+                    _stop.wait(timeout=1.5)
+
+            monitor = threading.Thread(target=_poll_progress, daemon=True)
+            monitor.start()
 
             try:
-                if progress_cb:
-                    progress_cb(
-                        0.0 if already_downloaded == 0 else -999,
-                        f"Connecting to HuggingFace… ({info['size_gb']:.1f} GB)"
-                    )
-
-                with requests.get(url, headers=headers, stream=True, timeout=30) as resp:
-                    resp.raise_for_status()
-
-                    # Total size (server may return Content-Range or Content-Length)
-                    content_length = int(resp.headers.get("Content-Length", 0))
-                    total_bytes = already_downloaded + content_length if content_length else 0
-
-                    mode = "ab" if already_downloaded > 0 else "wb"
-                    downloaded = already_downloaded
-
-                    with open(tmp_path, mode) as f:
-                        for chunk in resp.iter_content(chunk_size=CHUNK_SIZE):
-                            if not chunk:
-                                continue
-                            f.write(chunk)
-                            downloaded += len(chunk)
-
-                            if progress_cb and total_bytes > 0:
-                                pct = min(downloaded / total_bytes * 100, 99.9)
-                                done_gb  = downloaded  / (1024 ** 3)
-                                total_gb = total_bytes / (1024 ** 3)
-                                progress_cb(
-                                    pct,
-                                    f"Downloading… {done_gb:.2f} / {total_gb:.2f} GB"
-                                )
-
-                # Rename .partial → final file
-                if os.path.isfile(dest_path):
-                    os.remove(dest_path)
-                os.rename(tmp_path, dest_path)
+                hf_hub_download(
+                    repo_id=info["repo_id"],
+                    filename=info["filename"],
+                    local_dir=MODELS_DIR,
+                    local_dir_use_symlinks=False,
+                )
+                _stop.set()
 
                 if progress_cb:
                     progress_cb(100.0, "Download complete ✓")
                 return True
 
             except Exception as exc:
+                _stop.set()
                 if progress_cb:
                     progress_cb(-1.0, f"Download failed: {exc}")
                 return False

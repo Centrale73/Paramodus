@@ -688,6 +688,16 @@ function onBonsaiSetupProgress(phase, pct, msg) {
         overlay.classList.remove('visible');
         dot.className    = 'status-dot status-error';
         text.textContent = msg;
-        _bonsaiSetupTriggered = false; // Allow retry on re-select
+        _bonsaiSetupTriggered = false;
+        // Show retry button so the user can try again without restarting
+        const retryBtn = document.getElementById('btn-bonsai-retry');
+        if (retryBtn) retryBtn.style.display = 'block';
     }
+}
+
+async function retryBonsaiSetup() {
+    const retryBtn = document.getElementById('btn-bonsai-retry');
+    if (retryBtn) retryBtn.style.display = 'none';
+    _bonsaiSetupTriggered = false;
+    await triggerBonsaiAutoSetup();
 }

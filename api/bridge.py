@@ -145,7 +145,7 @@ class ApiBridge:
 
                 ok = bonsai.download_model(model_key=model_key, progress_cb=_dl_cb)
                 if not ok:
-                    _report('error', -1, 'Download failed — check your connection.')
+                    # Error message already sent by _dl_cb with the real exception
                     return
 
             # ── 3. Start server ──────────────────────────────────────────────
