@@ -52,12 +52,21 @@ def _find_release_asset(assets: list[dict]) -> tuple[str, str]:
     system  = platform.system()
     machine = platform.machine().lower()
 
+    is_arm = "arm" in machine or "aarch64" in machine
+
     def _score(name: str) -> int:
         name = name.lower()
         score = 0
         if system == "Windows":
             if "win" in name and name.endswith(".zip"):
                 score += 10
+                # Architecture match — critical to avoid Machine Type Mismatch
+                if is_arm:
+                    if "arm64" in name:  score += 8
+                    else:               score -= 20  # hard-penalise x64 on ARM
+                else:
+                    if "x64" in name or "amd64" in name: score += 8
+                    if "arm64" in name:  score -= 20  # hard-penalise ARM on x64
                 if "avx2" in name:   score += 3
                 elif "avx" in name:  score += 1
                 if "cuda" not in name and "vulkan" not in name:
@@ -66,13 +75,17 @@ def _find_release_asset(assets: list[dict]) -> tuple[str, str]:
             if "ubuntu" in name or "linux" in name:
                 if name.endswith(".zip") or name.endswith(".tar.gz"):
                     score += 10
-                if "x64" in name or "amd64" in name:
-                    score += 2
+                if is_arm:
+                    if "arm64" in name or "aarch64" in name: score += 5
+                elif "x64" in name or "amd64" in name:
+                    score += 5
         elif system == "Darwin":
             if "macos" in name and (name.endswith(".zip") or name.endswith(".tar.gz")):
                 score += 10
-                if "arm64" in name and ("arm" in machine or "aarch64" in machine):
-                    score += 3
+                if "arm64" in name and is_arm:
+                    score += 5
+                elif "x64" in name and not is_arm:
+                    score += 5
         return score
 
     ranked = sorted(assets, key=lambda a: _score(a["name"]), reverse=True)
