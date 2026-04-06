@@ -116,34 +116,52 @@ def _download_file(url: str, dest_path: str) -> None:
 
 
 def _extract_server_binary(archive_path: str, dest_dir: str) -> str:
+    """
+    Extract llama-server[.exe] AND all companion DLLs/SOs from the archive.
+    llama-server.exe depends on llama.dll, ggml.dll, etc. — they must all
+    live in the same directory or the exe will fail with a missing-DLL error.
+    """
     exe_name = "llama-server.exe" if sys.platform == "win32" else "llama-server"
+    server_path: str | None = None
 
     if archive_path.endswith(".zip"):
         with zipfile.ZipFile(archive_path) as z:
             for member in z.namelist():
                 base = os.path.basename(member)
-                if base == exe_name or base.rstrip(".exe") == "llama-server":
-                    dest_path = os.path.join(dest_dir, exe_name)
+                if not base:          # skip directory entries
+                    continue
+                # Extract the server exe and every DLL in the archive
+                is_server = (base == exe_name)
+                is_dll    = base.lower().endswith(".dll")
+                if is_server or is_dll:
+                    dest_path = os.path.join(dest_dir, base)
                     with z.open(member) as src, open(dest_path, "wb") as dst:
                         shutil.copyfileobj(src, dst)
-                    if sys.platform != "win32":
-                        os.chmod(dest_path, 0o755)
-                    return dest_path
+                    if is_server:
+                        if sys.platform != "win32":
+                            os.chmod(dest_path, 0o755)
+                        server_path = dest_path
     else:
         import tarfile
         with tarfile.open(archive_path) as t:
             for member in t.getmembers():
                 base = os.path.basename(member.name)
-                if base == exe_name:
-                    dest_path = os.path.join(dest_dir, exe_name)
+                is_server = (base == exe_name)
+                is_lib    = base.lower().endswith((".so", ".dylib"))
+                if is_server or is_lib:
+                    dest_path = os.path.join(dest_dir, base)
                     f = t.extractfile(member)
+                    if f is None:
+                        continue
                     with open(dest_path, "wb") as dst:
                         shutil.copyfileobj(f, dst)
-                    if sys.platform != "win32":
-                        os.chmod(dest_path, 0o755)
-                    return dest_path
+                    os.chmod(dest_path, 0o755)
+                    if is_server:
+                        server_path = dest_path
 
-    raise RuntimeError(f"Could not find {exe_name} inside {archive_path}")
+    if server_path is None:
+        raise RuntimeError(f"Could not find {exe_name} inside {archive_path}")
+    return server_path
 
 
 def download_standard_binary(dest_dir: str) -> str:

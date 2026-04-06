@@ -25,28 +25,32 @@
 #
 # =============================================================================
 
+import glob
 import os
 import sys
 
 block_cipher = None
 
 # ---------------------------------------------------------------------------
-# Binary: llama-server
+# Binary: llama-server + companion DLLs
 # ---------------------------------------------------------------------------
-# The exe is looked for in ./bin/ (placed there by get_llama_server.py --local)
-# If absent, the app falls back to the system PATH and ~/.myapp/bin/.
+# get_llama_server.py --local extracts llama-server.exe AND all DLLs it
+# depends on (llama.dll, ggml.dll, etc.) into ./bin/.
+# We bundle every file in bin/ so none of the DLLs are missing at runtime.
 
 exe_name = 'llama-server.exe' if sys.platform == 'win32' else 'llama-server'
-llama_server_local = os.path.join('bin', exe_name)
+bin_dir  = 'bin'
 
 extra_binaries = []
-if os.path.isfile(llama_server_local):
-    # Bundle alongside the main exe (destination '.' = root of the bundle)
-    extra_binaries = [(llama_server_local, '.')]
-    print(f'[paramodus.spec] Bundling {llama_server_local}')
-else:
+if os.path.isdir(bin_dir):
+    bin_files = [f for f in glob.glob(os.path.join(bin_dir, '*')) if os.path.isfile(f)]
+    # Destination '.' = root of the _internal bundle folder
+    extra_binaries = [(f, '.') for f in bin_files]
+    for f in bin_files:
+        print(f'[paramodus.spec] Bundling {f}')
+if not extra_binaries:
     print(
-        f'[paramodus.spec] WARNING: {llama_server_local} not found.\n'
+        '[paramodus.spec] WARNING: bin/ is empty or missing.\n'
         '  Run: python scripts/get_llama_server.py --local\n'
         '  The app will fall back to system PATH at runtime.'
     )
