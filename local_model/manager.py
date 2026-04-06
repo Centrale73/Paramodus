@@ -38,6 +38,37 @@ from typing import Callable, Optional
 
 import requests
 
+
+# ---------------------------------------------------------------------------
+# Port utility
+# ---------------------------------------------------------------------------
+
+def _free_port(port: int) -> None:
+    """
+    Kill any process currently listening on *port* so llama-server can bind.
+    Windows-only (uses netstat + taskkill); silently ignored on other platforms.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        result = subprocess.run(
+            ["netstat", "-ano"],
+            capture_output=True, text=True, timeout=10
+        )
+        for line in result.stdout.splitlines():
+            # Look for lines like:  TCP  127.0.0.1:8080  ...  LISTENING  <PID>
+            if f":{port}" in line and "LISTENING" in line:
+                parts = line.split()
+                pid = int(parts[-1])
+                subprocess.run(
+                    ["taskkill", "/PID", str(pid), "/F"],
+                    capture_output=True, timeout=5
+                )
+                print(f"[BonsaiManager] Freed port {port} — killed PID {pid}")
+                time.sleep(0.5)   # give the OS a moment to release the socket
+    except Exception as exc:
+        print(f"[BonsaiManager] Could not free port {port}: {exc}")
+
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
@@ -291,6 +322,19 @@ class BonsaiManager:
         with self._server_lock:
             if self.is_server_running():
                 return True
+
+            # Terminate any tracked process that may have stalled
+            if self._process and self._process.poll() is None:
+                self._process.terminate()
+                try:
+                    self._process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    self._process.kill()
+                self._process = None
+
+            # Evict any orphaned process holding the port (e.g. from a prior
+            # crashed run that didn't clean up via atexit)
+            _free_port(SERVER_PORT)
 
             llama_bin = self._get_llama_server_path()
             if llama_bin is None:
