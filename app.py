@@ -41,4 +41,4 @@ if __name__ == '__main__':
     # Also stop on window close (fires before atexit in most cases)
     window.events.closed += _on_exit
 
-    webview.start(debug=True)
+    webview.start(debug=False)

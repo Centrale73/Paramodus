@@ -31,20 +31,35 @@ db = SqliteDb(db_file=os.path.join(app_data, "memory.db"))
 # Local LanceDB for knowledge (FREE)
 LANCE_URI = os.path.join(app_data, "lancedb")
 
-# Knowledge Base initialization with FastEmbed
-knowledge = Knowledge(
-    vector_db=LanceDb(
-        table_name="user_documents",
-        uri=LANCE_URI,
-        embedder=FastEmbedEmbedder(
-            id="BAAI/bge-small-en-v1.5",
-            dimensions=384
-        ),
-    ),
-)
-
 # Shared chunking strategy for readers
-DEFAULT_CHUNKER = RecursiveChunking(chunk_size=1000, overlap=200)
+DEFAULT_CHUNKER = RecursiveChunking(chunk_size=1000, overlap=150)
+
+# ---------------------------------------------------------------------------
+# Lazy Knowledge Base initialization
+# ---------------------------------------------------------------------------
+# We defer construction until first use so that FastEmbed does NOT download
+# its ~25 MB model weights synchronously at import time.  This means the
+# pywebview window renders immediately instead of hanging for 30+ seconds on
+# the first run while the model is pulled from the internet.
+# ---------------------------------------------------------------------------
+_knowledge: Optional[Knowledge] = None
+
+
+def _get_knowledge() -> Knowledge:
+    """Return the module-level Knowledge singleton, creating it on first call."""
+    global _knowledge
+    if _knowledge is None:
+        _knowledge = Knowledge(
+            vector_db=LanceDb(
+                table_name="user_documents",
+                uri=LANCE_URI,
+                embedder=FastEmbedEmbedder(
+                    id="BAAI/bge-small-en-v1.5",
+                    dimensions=384,
+                ),
+            ),
+        )
+    return _knowledge
 
 # Use a FIXED user_id for single-user environment
 USER_ID = "local_user"
@@ -84,7 +99,7 @@ def ingest_files(files: List[Dict[str, any]]) -> bool:
                 continue
 
             # agno 2.x API: insert by path, passing reader and metadata
-            knowledge.insert(
+            _get_knowledge().insert(
                 path=tmp_path,
                 name=name,
                 reader=reader,
@@ -113,7 +128,7 @@ def ingest_text(text: str, source_name: str = "text_input") -> bool:
     """
     try:
         # agno 2.x API: insert text_content directly — no temp file needed
-        knowledge.insert(
+        _get_knowledge().insert(
             text_content=text,
             name=source_name,
             metadata={"source": source_name},
@@ -133,12 +148,12 @@ def clear_knowledge_base() -> bool:
     try:
         # agno 2.x API: drop via the LanceDb wrapper so the internal
         # table reference stays consistent, then recreate the empty table.
-        if knowledge.vector_db.exists():
-            knowledge.vector_db.drop()
+        if _get_knowledge().vector_db.exists():
+            _get_knowledge().vector_db.drop()
             print("✓ Knowledge base cleared")
 
         # Recreate the empty table so subsequent inserts work without restart
-        knowledge.vector_db.create()
+        _get_knowledge().vector_db.create()
         return True
 
     except Exception as e:
@@ -152,7 +167,7 @@ def search_knowledge_base(query: str, limit: int = 5) -> List[Dict]:
     """
     try:
         # agno 2.x API: search via Knowledge, not directly on LanceDb
-        results: List[Document] = knowledge.search(query=query, max_results=limit)
+        results: List[Document] = _get_knowledge().search(query=query, max_results=limit)
         return [doc.to_dict() for doc in results]
     except Exception as e:
         print(f"Error searching knowledge base: {e}")
@@ -165,8 +180,8 @@ def get_knowledge_stats() -> Dict:
     """
     try:
         # agno 2.x API: use LanceDb wrapper methods
-        if knowledge.vector_db.exists():
-            count = knowledge.vector_db.get_count()
+        if _get_knowledge().vector_db.exists():
+            count = _get_knowledge().vector_db.get_count()
             return {
                 "total_chunks": count,
                 "status": "active"
@@ -262,7 +277,7 @@ def get_agent(
     
     # Add LOCAL & FREE RAG capabilities
     if enable_rag:
-        agent_config["knowledge"] = knowledge
+        agent_config["knowledge"] = _get_knowledge()
         agent_config["search_knowledge"] = True
     
     return Agent(**agent_config)
