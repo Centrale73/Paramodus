@@ -27,11 +27,11 @@
             <div class="config-section">
                 <label class="config-label">Provider</label>
                 <div class="custom-dropdown" id="provider-dropdown">
-                    <div class="dropdown-selected" data-value="openai" onclick="toggleProviderDropdown()">
-                        <span class="selected-text">OpenAI</span>
+                    <div class="dropdown-selected" data-value="bonsai" onclick="toggleProviderDropdown()">
+                        <span class="selected-text">🌿 Bonsai 8B (Local)</span>
                     </div>
                     <div class="dropdown-options">
-                        <div class="dropdown-option selected" data-value="openai"
+                        <div class="dropdown-option" data-value="openai"
                             onclick="selectProvider('openai', 'OpenAI')">
                             OpenAI</div>
                         <div class="dropdown-option" data-value="anthropic"
@@ -49,25 +49,25 @@
                             onclick="selectProvider('openrouter', 'OpenRouter')">OpenRouter</div>
                         <div class="dropdown-option" data-value="perplexity"
                             onclick="selectProvider('perplexity', 'Perplexity')">Perplexity</div>
-                        <div class="dropdown-option" data-value="bonsai"
+                        <div class="dropdown-option selected" data-value="bonsai"
                             onclick="selectProvider('bonsai', '🌿 Bonsai 8B (Local)')">🌿 Bonsai 8B (Local)</div>
                     </div>
                 </div>
-                <input type="hidden" id="provider-select" value="openai">
+                <input type="hidden" id="provider-select" value="bonsai">
 
                 <label class="config-label">Model ID (Optional)</label>
                 <input type="text" id="model-input" class="config-input" placeholder="e.g. gpt-4o"
                     onchange="updateModel()">
 
                 <!-- Cloud provider: API Key input -->
-                <div id="cloud-api-section">
+                <div id="cloud-api-section" style="display:none;">
                     <label class="config-label">API Key</label>
                     <input type="password" id="api-key" class="config-input" placeholder="sk-...">
                     <button class="btn-save" onclick="saveKey()">Save Configuration</button>
                 </div>
 
                 <!-- Local model: Bonsai panel (shown when bonsai is selected) -->
-                <div id="bonsai-panel" style="display:none;">
+                <div id="bonsai-panel">
                     <div class="bonsai-status-bar" id="bonsai-status-bar">
                         <span id="bonsai-status-dot" class="status-dot status-offline"></span>
                         <span id="bonsai-status-text">Setting up…</span>

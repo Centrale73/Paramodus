@@ -26,6 +26,10 @@ window.addEventListener('pywebviewready', async () => {
     setupTypingSpeedDetection();
     animateHeader();
     loadSessionList();
+
+    // Auto-start Bonsai setup on every launch — no user action needed.
+    // triggerBonsaiAutoSetup() is a no-op if the server is already running.
+    triggerBonsaiAutoSetup();
 });
 
 // ========================================

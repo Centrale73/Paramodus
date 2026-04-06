@@ -23,7 +23,7 @@ class ApiBridge:
             "bonsai":     "local",
         }
         # Default provider and model
-        self.current_provider = os.environ.get("DEFAULT_PROVIDER", "openai")
+        self.current_provider = os.environ.get("DEFAULT_PROVIDER", "bonsai")
         self.current_model = os.environ.get("DEFAULT_MODEL", None)
         self.window = None
         self.multi_agent_mode = False
