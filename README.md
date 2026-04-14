@@ -114,8 +114,21 @@ This automatically:
 1. Downloads the **PrismML llama.cpp fork** binary (pre-built, no cmake needed) into `./bin/` — required for the native 1-bit Q1_0_g128 kernel
 2. Downloads **Bonsai-8B.gguf** (~1.15 GB) into `./models/` from HuggingFace
 3. Runs PyInstaller, bundling both the binary and the model into `dist/Paramodus/`
+4. **(Optional) Runs Inno Setup** — if installed, automatically produces `installer/ParamodusSetup.exe`
 
-Distribute the entire `dist/Paramodus/` folder.  Users open `Paramodus.exe` and chat immediately.
+### End-user distribution
+
+**Recommended: Inno Setup installer** (Windows)
+- Install [Inno Setup 6](https://jrsoftware.org/isdl.php) (free, one-time)
+- `python build.py` now also produces `installer/ParamodusSetup.exe`
+- User downloads `ParamodusSetup.exe`, double-clicks, gets a standard install wizard
+- Creates desktop shortcut, Start Menu entry, and an uninstaller in Windows Settings
+- Under the hood it installs to `C:\Program Files\Paramodus\` and manages `_internal/`
+
+**Fallback: zip the folder**
+- Without Inno Setup, zip `dist/Paramodus/` and share the archive
+- Users must extract the full folder, then run `Paramodus.exe` from inside it
+- Moving just `Paramodus.exe` out of the folder will break it (DLLs live in `_internal/`)
 
 ### Manual steps (optional)
 

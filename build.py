@@ -23,6 +23,31 @@ import os
 import shutil
 
 
+def _find_iscc() -> str | None:
+    """
+    Locate the Inno Setup compiler (iscc.exe) on Windows.
+    Checks PATH first, then the default Inno Setup 6 install location.
+    Returns the full path if found, None otherwise.
+    """
+    # 1. PATH
+    result = shutil.which("iscc")
+    if result:
+        return result
+
+    # 2. Default Inno Setup 6 install paths
+    candidates = [
+        r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+        r"C:\Program Files\Inno Setup 6\ISCC.exe",
+        r"C:\Program Files (x86)\Inno Setup 5\ISCC.exe",
+        r"C:\Program Files\Inno Setup 5\ISCC.exe",
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+
+    return None
+
+
 def main():
     root = os.path.dirname(os.path.abspath(__file__))
 
@@ -90,6 +115,31 @@ def main():
         print("[build] ERROR: PyInstaller failed.")
         sys.exit(1)
 
+    # ── Step 4: Inno Setup installer (Windows only, optional) ───────────────
+    # If Inno Setup is installed, automatically produce a single
+    # ParamodusSetup.exe installer that end users just double-click.
+    # Download Inno Setup from: https://jrsoftware.org/isdl.php
+    installer_exe = None
+    if sys.platform == "win32":
+        iscc = _find_iscc()
+        iss  = os.path.join(root, "paramodus.iss")
+        if iscc and os.path.isfile(iss):
+            os.makedirs(os.path.join(root, "installer"), exist_ok=True)
+            print("[build] Running Inno Setup to produce ParamodusSetup.exe…")
+            result = subprocess.run([iscc, iss], check=False)
+            installer_path = os.path.join(root, "installer", "ParamodusSetup.exe")
+            if result.returncode == 0 and os.path.isfile(installer_path):
+                size_mb = os.path.getsize(installer_path) / (1024 ** 2)
+                installer_exe = installer_path
+                print(f"[build] ✓ Installer ready: {installer_path} ({size_mb:.0f} MB)")
+            else:
+                print("[build] WARNING: Inno Setup failed — distributing folder instead.")
+        elif not iscc:
+            print(
+                "[build] Inno Setup not found — skipping installer generation.\n"
+                "[build]   Install from https://jrsoftware.org/isdl.php for a single-file installer."
+            )
+
     # ── Done ──────────────────────────────────────────────────────────────────
     dist_dir = os.path.join(root, "dist", "Paramodus")
     exe_out  = os.path.join(dist_dir, "Paramodus.exe" if sys.platform == "win32" else "Paramodus")
@@ -98,9 +148,14 @@ def main():
             os.path.getsize(os.path.join(dp, f))
             for dp, dn, fn in os.walk(dist_dir) for f in fn
         ) / (1024 ** 2)
-        print(f"\n[build] ✓ Done — {dist_dir}/ ({dist_size_mb:.0f} MB total)")
-        print("[build]   Distribute the dist/Paramodus/ folder.")
-        print("[build]   End users open Paramodus.exe and chat immediately — no setup.")
+        print(f"\n[build] ✓ Build complete ({dist_size_mb:.0f} MB uncompressed)")
+        if installer_exe:
+            ins_mb = os.path.getsize(installer_exe) / (1024 ** 2)
+            print(f"[build]   Distribute: installer/ParamodusSetup.exe ({ins_mb:.0f} MB)")
+            print("[build]   Users double-click ParamodusSetup.exe → install → chat.")
+        else:
+            print(f"[build]   Distribute: dist/Paramodus/ folder (zip it first)")
+            print("[build]   Install Inno Setup to auto-produce a single-file installer.")
     else:
         print(f"\n[build] Build finished. Check the dist/ folder.")
 
