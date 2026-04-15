@@ -185,14 +185,25 @@ class BonsaiManager:
         """
         filename = MODELS[model_key]["filename"]
 
-        # 1. Check inside the PyInstaller bundle first
+        # 1. PyInstaller frozen exe — check several locations
         if getattr(sys, "frozen", False):
-            bundle_path = os.path.join(sys._MEIPASS, "models", filename)
-            if os.path.isfile(bundle_path):
-                return bundle_path
+            candidates = [
+                # _MEIPASS is the _internal/ extraction dir (COLLECT mode)
+                os.path.join(sys._MEIPASS, "models", filename),
+                # Sibling of the .exe itself (in case user moved the model)
+                os.path.join(os.path.dirname(sys.executable), "models", filename),
+                # _internal/models/ via exe path (belt-and-suspenders)
+                os.path.join(os.path.dirname(sys.executable), "_internal", "models", filename),
+            ]
+            for p in candidates:
+                print(f"[BonsaiManager] model lookup: {p} -> {'EXISTS' if os.path.isfile(p) else 'not found'}")
+                if os.path.isfile(p):
+                    return p
 
         # 2. Fall back to the user's app-data models directory
-        return os.path.join(MODELS_DIR, filename)
+        fallback = os.path.join(MODELS_DIR, filename)
+        print(f"[BonsaiManager] model fallback: {fallback} -> {'EXISTS' if os.path.isfile(fallback) else 'not found'}")
+        return fallback
 
     def is_model_downloaded(self, model_key: str = DEFAULT_MODEL) -> bool:
         path = self.get_model_path(model_key)
@@ -410,9 +421,22 @@ class BonsaiManager:
                 return False
 
             model_path = self.get_model_path(model_key)
+            print(f"[BonsaiManager] Using model: {model_path}")
+            print(f"[BonsaiManager] Model exists: {os.path.isfile(model_path)}")
             if not os.path.isfile(model_path):
                 print(f"[BonsaiManager] Model not found at {model_path} — download it first.")
+                # List what IS in the expected dirs to help diagnose
+                for check_dir in [
+                    os.path.join(getattr(sys, '_MEIPASS', ''), 'models'),
+                    os.path.join(os.path.dirname(sys.executable), 'models'),
+                    MODELS_DIR,
+                ]:
+                    if os.path.isdir(check_dir):
+                        print(f"[BonsaiManager] Contents of {check_dir}: {os.listdir(check_dir)}")
+                    else:
+                        print(f"[BonsaiManager] Dir not found: {check_dir}")
                 return False
+            print(f"[BonsaiManager] Using binary: {llama_bin}")
 
             # Auto-detect GPU if not explicitly specified
             if n_gpu_layers is None:
