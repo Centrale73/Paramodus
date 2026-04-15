@@ -471,11 +471,32 @@ class BonsaiManager:
             Read every line from the server's stdout.
             - Writes each line to the log file.
             - Fires status_cb for live UI feedback.
-            - Sets 'ready' when the listening message appears.
+            - Sets 'ready' when any known ready marker appears OR when the
+              HTTP health endpoint responds (belt-and-suspenders).
             - Sets 'crashed' if the process exits before becoming ready.
+
+            llama.cpp has changed its ready log line across versions:
+              Older builds : 'llama server listening at http://...'
+              Newer builds : 'server is listening on http://...'
+              JSON log mode: '{"message":"server is listening on"}'
+              PrismML fork : may emit 'HTTP server listening' or similar
+            We match any substring from READY_MARKERS to stay version-safe,
+            and fall back to polling /health if none of the strings match.
             """
-            READY_MARKER  = "server is listening on"
-            ERROR_MARKER  = "HTTP server error"
+            READY_MARKERS = (
+                "server is listening on",      # llama.cpp >= b3000
+                "llama server listening at",    # llama.cpp older
+                "HTTP server listening",        # some forks
+                "all slots are idle",           # seen in some builds
+                "model loaded",                 # PrismML specific
+                "listening on",                 # catch-all
+            )
+            ERROR_MARKERS = (
+                "HTTP server error",
+                "failed to bind",
+                "address already in use",
+                "error: unable to start",
+            )
 
             try:
                 with open(log, "a", buffering=1) as lf:
@@ -491,11 +512,11 @@ class BonsaiManager:
                             except Exception:
                                 pass
 
-                        if READY_MARKER in line:
+                        low = line.lower()
+                        if any(m.lower() in low for m in READY_MARKERS):
                             ready.set()
-                            # Keep draining stdout after ready so the pipe
-                            # doesn't block the server process
-                        elif ERROR_MARKER in line:
+                            # Keep draining so the pipe doesn't block
+                        elif any(m.lower() in low for m in ERROR_MARKERS):
                             print(f"[BonsaiManager] Server reported error: {stripped}")
                             crashed.set()
                             return
@@ -513,13 +534,24 @@ class BonsaiManager:
         )
         drain_thread.start()
 
-        # Wait for ready or crash, respecting the hard deadline
+        # Wait for ready or crash, respecting the hard deadline.
+        # Also poll /health every 2 s as a fallback — catches builds where
+        # llama-server uses structured JSON logging and never emits a
+        # plain-text ready line that matches our READY_MARKERS.
+        _last_health_check = time.monotonic()
         while not ready.is_set() and not crashed.is_set():
             if time.monotonic() > deadline:
                 print("[BonsaiManager] Timed out waiting for server to become ready.")
                 self.stop_server()
                 return False
-            time.sleep(0.1)  # 100 ms tick — much tighter than the old 1 s poll
+            # Health poll fallback every 2 s
+            if time.monotonic() - _last_health_check >= 2.0:
+                _last_health_check = time.monotonic()
+                if self.is_server_running():
+                    print("[BonsaiManager] /health responded — server is ready (log marker not matched)")
+                    ready.set()
+                    break
+            time.sleep(0.1)  # 100 ms tick
 
         if ready.is_set():
             print(f"[BonsaiManager] Server ready at http://{SERVER_HOST}:{SERVER_PORT}/v1")

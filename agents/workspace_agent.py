@@ -210,7 +210,10 @@ DEFAULT_MODELS = {
     "openrouter": "openai/gpt-4o-mini",
     "perplexity": "sonar-pro",
     # Bonsai 8B runs locally via llama-server — no API key needed
-    "bonsai": "bonsai-8b",
+    # llama-server accepts any model name but "local-model" is the
+    # conventional placeholder that works across all llama.cpp versions
+    # without triggering a 404 model-not-found response.
+    "bonsai": "local-model",
 }
 
 
