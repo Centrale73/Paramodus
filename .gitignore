@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Application specific
+bin/
+models/
+*.exe
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Scratch / debug
+scratch/
+
+# Runtime data
+memory_data/
+*.db
+
+# Google OAuth
+token.json
+credentials.json

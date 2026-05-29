@@ -1,0 +1,17 @@
+agno
+aiofiles
+pywebview
+openai
+pydantic
+python-dotenv
+sqlalchemy
+pypdf
+lancedb
+fastembed
+pandas
+requests
+tantivy
+ddgs
+google-api-python-client
+google-auth-httplib2
+google-auth-oauthlib

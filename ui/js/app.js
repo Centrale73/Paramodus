@@ -1,0 +1,928 @@
+/* ============================================
+   AGENTIC WORKSPACE - APP.JS
+   Main Application Logic with GenUI Features
+   ============================================ */
+
+// ========================================
+// STATE
+// ========================================
+let currentBotMsgId = null;
+let botBuffers = {};
+
+// GenUI: Typing speed tracking
+let lastKeyTime = 0;
+let keyIntervals = [];
+const TYPING_SAMPLE_SIZE = 10;
+const SLOW_THRESHOLD_MS = 400;  // Characters typed slower than this = "slow"
+const FAST_THRESHOLD_MS = 150;  // Characters typed faster than this = "fast"
+
+// ========================================
+// INITIALIZATION
+// ========================================
+window.addEventListener('pywebviewready', async () => {
+    const history = await window.pywebview.api.load_history();
+    history.forEach(msg => appendMessage(msg.role, msg.content, false));
+    setupDragAndDrop();
+    setupTypingSpeedDetection();
+    animateHeader();
+    loadSpaces(); // This will call loadSessionList() after rendering spaces
+    loadCrmSettings();
+
+    // Auto-start Bonsai setup on every launch — no user action needed.
+    // triggerBonsaiAutoSetup() is a no-op if the server is already running.
+    triggerBonsaiAutoSetup();
+});
+
+// ========================================
+// NEW CHAT / SESSION MANAGEMENT
+// ========================================
+async function newChat() {
+    // Call backend to create new session
+    const result = await window.pywebview.api.new_session(selectedSpaceId);
+    if (result.status === 'success') {
+        clearChatUI();
+        console.log('New session started:', result.session_id);
+        loadSessionList();
+    }
+}
+
+function clearChatUI() {
+    // Clear chat history DOM
+    document.getElementById('chat-history').innerHTML = '';
+
+    // Clear state
+    currentBotMsgId = null;
+    botBuffers = {};
+    checkpointedMessages.clear();
+
+    // Clear checkpoint sidebar
+    document.getElementById('checkpoint-blocks').innerHTML = '';
+}
+
+async function loadSessionList() {
+    const sessions = await window.pywebview.api.list_sessions();
+    const list = document.getElementById('session-list');
+
+    // Filter by selected space
+    const filteredSessions = sessions.filter(s => s.space_id === selectedSpaceId);
+
+    if (!filteredSessions || filteredSessions.length === 0) {
+        list.innerHTML = '<div class="no-sessions">No previous chats</div>';
+        return;
+    }
+
+    // Get current session ID to highlight active
+    const currentId = await window.pywebview.api.get_current_session_id();
+
+    let html = '';
+    filteredSessions.forEach(session => {
+        const date = new Date(session.timestamp).toLocaleDateString();
+        const activeClass = session.id === currentId ? 'active' : '';
+        // Escape title to prevent XSS
+        const safeTitle = session.title.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        html += `
+            <div class="session-item ${activeClass}" onclick="switchSession('${session.id}')">
+                <div class="session-info">
+                    <div class="session-title">${safeTitle}</div>
+                    <div class="session-date">${date}</div>
+                </div>
+                <button class="btn-delete-session" onclick="deleteSession(event, '${session.id}')" title="Delete chat">×</button>
+            </div>
+        `;
+    });
+
+    list.innerHTML = html;
+}
+
+async function switchSession(sessionId) {
+    const result = await window.pywebview.api.switch_session(sessionId);
+    if (result.status === 'success') {
+        clearChatUI();
+        // Load history for this session
+        const history = await window.pywebview.api.load_history();
+        history.forEach(msg => appendMessage(msg.role, msg.content, false));
+        // Refresh list to update active state
+        loadSessionList();
+    }
+}
+
+function showConfirmModal() {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('custom-modal-overlay');
+        const modal = document.getElementById('custom-modal');
+        const cancelBtn = document.getElementById('modal-cancel-btn');
+        const confirmBtn = document.getElementById('modal-confirm-btn');
+
+        overlay.style.display = 'flex';
+        // Trigger reflow for animation
+        void overlay.offsetWidth;
+        overlay.style.opacity = '1';
+        modal.style.transform = 'translateY(0)';
+
+        const close = (result) => {
+            overlay.style.opacity = '0';
+            modal.style.transform = 'translateY(20px)';
+            setTimeout(() => {
+                overlay.style.display = 'none';
+            }, 200);
+            
+            cancelBtn.removeEventListener('click', onCancel);
+            confirmBtn.removeEventListener('click', onConfirm);
+            resolve(result);
+        };
+
+        const onCancel = () => close(false);
+        const onConfirm = () => {
+            const dontShowAgain = document.getElementById('modal-dont-show-again');
+            if (dontShowAgain && dontShowAgain.checked) {
+                localStorage.setItem("skipDeleteConfirm", "true");
+            }
+            close(true);
+        };
+
+        cancelBtn.addEventListener('click', onCancel);
+        confirmBtn.addEventListener('click', onConfirm);
+    });
+}
+
+function showAlertModal(message, title = 'Alert', icon = 'ℹ️') {
+    return new Promise((resolve) => {
+        const overlay = document.getElementById('custom-alert-overlay');
+        const modal = document.getElementById('custom-alert');
+        const okBtn = document.getElementById('alert-ok-btn');
+        const titleEl = document.getElementById('custom-alert-title');
+        const msgEl = document.getElementById('custom-alert-msg');
+        const iconEl = document.getElementById('custom-alert-icon');
+
+        titleEl.textContent = title;
+        msgEl.textContent = message;
+        iconEl.textContent = icon;
+
+        overlay.style.display = 'flex';
+        void overlay.offsetWidth;
+        overlay.style.opacity = '1';
+        modal.style.transform = 'translateY(0)';
+
+        const close = () => {
+            overlay.style.opacity = '0';
+            modal.style.transform = 'translateY(20px)';
+            setTimeout(() => {
+                overlay.style.display = 'none';
+            }, 200);
+            
+            okBtn.removeEventListener('click', close);
+            resolve();
+        };
+
+        okBtn.addEventListener('click', close);
+    });
+}
+
+async function deleteSession(event, sessionId) {
+    // Prevent the click from bubbling up to the session item
+    event.stopPropagation();
+    
+    if (localStorage.getItem("skipDeleteConfirm") !== "true") {
+        const confirmed = await showConfirmModal();
+        if (!confirmed) {
+            return;
+        }
+    }
+
+    const result = await window.pywebview.api.delete_session(sessionId);
+    if (result.status === 'success') {
+        // Find if this was the active session
+        const currentId = await window.pywebview.api.get_current_session_id();
+        if (currentId !== sessionId) {
+            // The active session was deleted, which means backend assigned a new one
+            clearChatUI();
+        }
+        loadSessionList();
+    }
+}
+
+
+// ========================================
+// GENUI: TYPING SPEED DETECTION
+// ========================================
+function setupTypingSpeedDetection() {
+    const input = document.getElementById('user-input');
+
+    input.addEventListener('keydown', (e) => {
+        // Ignore non-character keys
+        if (e.key.length !== 1 && e.key !== 'Backspace') return;
+
+        const now = Date.now();
+        if (lastKeyTime > 0) {
+            const interval = now - lastKeyTime;
+            keyIntervals.push(interval);
+
+            // Keep only the last N samples
+            if (keyIntervals.length > TYPING_SAMPLE_SIZE) {
+                keyIntervals.shift();
+            }
+
+            // Calculate average and apply theme
+            if (keyIntervals.length >= 5) {
+                const avgInterval = keyIntervals.reduce((a, b) => a + b, 0) / keyIntervals.length;
+                applyTypingTheme(avgInterval);
+            }
+        }
+        lastKeyTime = now;
+    });
+
+    // Reset when input loses focus
+    input.addEventListener('blur', () => {
+        keyIntervals = [];
+        lastKeyTime = 0;
+    });
+}
+
+function applyTypingTheme(avgInterval) {
+    const body = document.body;
+
+    // Remove existing typing classes
+    body.classList.remove('typing-slow', 'typing-fast');
+
+    if (avgInterval > SLOW_THRESHOLD_MS) {
+        body.classList.add('typing-slow');
+    } else if (avgInterval < FAST_THRESHOLD_MS) {
+        body.classList.add('typing-fast');
+    }
+    // Otherwise, neutral theme (no class)
+}
+
+// ========================================
+// GENUI: TONE-BASED MESSAGE STYLING
+// ========================================
+function applyToneToMessage(messageId, tone) {
+    const msgElement = document.getElementById(messageId);
+    if (msgElement && tone) {
+        // Remove any existing tone classes
+        msgElement.classList.remove('tone-calm', 'tone-excited', 'tone-serious', 'tone-playful');
+
+        // Add the appropriate tone class
+        const toneClass = `tone-${tone.toLowerCase()}`;
+        if (['tone-calm', 'tone-excited', 'tone-serious', 'tone-playful'].includes(toneClass)) {
+            msgElement.classList.add(toneClass);
+        }
+    }
+}
+
+// ========================================
+// SIDEBAR
+// ========================================
+// ========================================
+// SIDEBAR
+// ========================================
+let currentSidebarView = 'chats';
+
+function toggleSidebar(view = null) {
+    const sidebar = document.getElementById('sidebar');
+    const title = document.getElementById('sidebar-title');
+
+    // If no view specified (e.g. close button), just toggle or close
+    if (!view) {
+        sidebar.classList.remove('visible');
+        updateSidebarPosition();
+        return;
+    }
+
+    // If opening a new view or switching views
+    if (!sidebar.classList.contains('visible') || currentSidebarView !== view) {
+        // Update content visibility
+        document.getElementById('view-chats').style.display = view === 'chats' ? 'block' : 'none';
+        document.getElementById('view-settings').style.display = view === 'settings' ? 'block' : 'none';
+
+        // Update title
+        title.textContent = view === 'chats' ? 'Chats' : 'Settings';
+
+        // Update tabs active state
+        document.getElementById('tab-chats').classList.toggle('active', view === 'chats');
+        document.getElementById('tab-settings').classList.toggle('active', view === 'settings');
+
+        currentSidebarView = view;
+        sidebar.classList.add('visible');
+    } else {
+        // Clicking the same tab again closes it
+        sidebar.classList.remove('visible');
+
+        // Remove active state from tabs
+        document.getElementById('tab-chats').classList.remove('active');
+        document.getElementById('tab-settings').classList.remove('active');
+    }
+
+    updateSidebarPosition();
+}
+
+function updateSidebarPosition() {
+    const sidebar = document.getElementById('sidebar');
+    anime({
+        targets: sidebar,
+        translateX: sidebar.classList.contains('visible') ? ['-100%', '0%'] : ['0%', '-100%'],
+        duration: 350,
+        easing: 'easeOutQuad'
+    });
+}
+
+// ========================================
+// HEADER ANIMATION
+// ========================================
+function animateHeader() {
+    anime({
+        targets: '.logo',
+        translateY: [-8, 0],
+        opacity: [0, 1],
+        duration: 600,
+        easing: 'easeOutQuad'
+    });
+}
+
+// ========================================
+// SETTINGS & CONFIGURATION
+// ========================================
+// ========================================
+// LANGUAGE SELECTION
+// ========================================
+
+function toggleLanguageDropdown() {
+    const dropdown = document.getElementById('language-dropdown');
+    dropdown.classList.toggle('open');
+}
+
+async function selectLanguage(value, label) {
+    const dropdown = document.getElementById('language-dropdown');
+    const selected = dropdown.querySelector('.dropdown-selected');
+    const selectedText = selected.querySelector('.selected-text');
+
+    // Update selected display
+    selected.setAttribute('data-value', value);
+    selectedText.textContent = label;
+
+    // Update selected class on options
+    dropdown.querySelectorAll('.dropdown-option').forEach(opt => {
+        opt.classList.toggle('selected', opt.getAttribute('data-value') === value);
+    });
+
+    // Close dropdown
+    dropdown.classList.remove('open');
+
+    // Trigger API call
+    console.log("Setting language to:", value);
+    await window.pywebview.api.set_language(value);
+}
+
+// ========================================
+// CRM INTEGRATIONS
+// ========================================
+
+async function loadCrmSettings() {
+    try {
+        const settings = await window.pywebview.api.get_crm_settings();
+        const toggleCal = document.getElementById('crm-google-toggle');
+        const toggleMail = document.getElementById('crm-gmail-toggle');
+        const toggleContacts = document.getElementById('crm-contacts-toggle');
+        const toggleDrive = document.getElementById('crm-drive-toggle');
+        
+        if (toggleCal) toggleCal.checked = settings.google_calendar_enabled === true;
+        if (toggleMail) toggleMail.checked = settings.google_gmail_enabled === true;
+        if (toggleContacts) toggleContacts.checked = settings.google_contacts_enabled === true;
+        if (toggleDrive) toggleDrive.checked = settings.google_drive_enabled === true;
+    } catch (e) {
+        console.warn("Failed to load CRM settings", e);
+    }
+}
+
+async function toggleGoogleSettings() {
+    const toggleCal = document.getElementById('crm-google-toggle');
+    const toggleMail = document.getElementById('crm-gmail-toggle');
+    const toggleContacts = document.getElementById('crm-contacts-toggle');
+    const toggleDrive = document.getElementById('crm-drive-toggle');
+    
+    const settings = {
+        google_calendar_enabled: toggleCal ? toggleCal.checked : false,
+        google_gmail_enabled: toggleMail ? toggleMail.checked : false,
+        google_contacts_enabled: toggleContacts ? toggleContacts.checked : false,
+        google_drive_enabled: toggleDrive ? toggleDrive.checked : false
+    };
+    
+    try {
+        const result = await window.pywebview.api.set_google_settings(settings);
+        if (result.status === 'error') {
+            showAlertModal("Error setting Google preferences: " + result.message, "Error", "❌");
+            loadCrmSettings(); // revert to backend truth
+        } else if (Object.values(settings).some(v => v)) {
+            showAlertModal("Google Workspace Settings Updated.\n\nIf this is your first time enabling a service, check your web browser to complete the OAuth login flow.", "Success", "✅");
+        }
+    } catch (e) {
+        showAlertModal("Failed to update setting", "Error", "❌");
+        loadCrmSettings();
+    }
+}
+
+// Close dropdown when clicking outside
+document.addEventListener('click', (e) => {
+    const dropdown = document.getElementById('language-dropdown');
+    if (dropdown && !dropdown.contains(e.target)) {
+        dropdown.classList.remove('open');
+    }
+});
+
+// ========================================
+// RAG / FILE HANDLING
+// ========================================
+async function clearRag() {
+    const res = await window.pywebview.api.clear_rag_context();
+    document.getElementById('file-list').innerHTML = '';
+    document.getElementById('sidebar-file-list').innerHTML = '';
+    showAlertModal(res, "Context Cleared", "🗑️");
+}
+
+function setupDragAndDrop() {
+    const dz = document.getElementById('drop-zone');
+    ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(evt => {
+        dz.addEventListener(evt, e => {
+            e.preventDefault();
+            e.stopPropagation();
+        });
+    });
+    dz.addEventListener('dragover', () => dz.classList.add('active'));
+    dz.addEventListener('dragleave', () => dz.classList.remove('active'));
+    dz.addEventListener('drop', e => processFiles(e.dataTransfer.files));
+}
+
+function handleFileSelect(e) {
+    processFiles(e.target.files);
+}
+
+async function processFiles(filesList) {
+    const dz = document.getElementById('drop-zone');
+    dz.classList.remove('active');
+    const files = Array.from(filesList);
+    const uploadData = [];
+
+    for (const file of files) {
+        const reader = new FileReader();
+        const promise = new Promise(resolve => {
+            reader.onload = e => resolve({ name: file.name, content: e.target.result });
+            reader.readAsDataURL(file);
+        });
+        uploadData.push(await promise);
+    }
+
+    if (uploadData.length > 0) {
+        dz.innerText = "Ingesting...";
+        const res = await window.pywebview.api.upload_files(uploadData);
+        if (res.status === 'success') {
+            updateFileList(res.files);
+            dz.innerText = "Files ready!";
+            setTimeout(() => {
+                dz.innerText = "Drag PDF/CSV here\nor Click to upload";
+            }, 3000);
+        } else {
+            showAlertModal("Error: " + res.message, "Upload Error", "❌");
+            dz.innerText = "Drag PDF/CSV here\nor Click to upload";
+        }
+    }
+}
+
+function updateFileList(files) {
+    const list = document.getElementById('file-list');
+    const sidebarList = document.getElementById('sidebar-file-list');
+    const html = files.map(f => `<div class="file-tag">${f}</div>`).join('');
+    list.innerHTML = html;
+    sidebarList.innerHTML = html;
+
+    anime({
+        targets: '.file-tag',
+        opacity: [0, 1],
+        translateY: [6, 0],
+        delay: anime.stagger(40),
+        duration: 300,
+        easing: 'easeOutQuad'
+    });
+}
+
+// ========================================
+// CHAT FUNCTIONALITY
+// ========================================
+function handleEnter(e) {
+    if (e.key === 'Enter') sendPrompt();
+}
+
+function sendPrompt() {
+    const input = document.getElementById('user-input');
+    const val = input.value.trim();
+    if (!val) return;
+
+    input.value = '';
+    appendMessage('user', val);
+
+    const botId = 'bot-' + Date.now();
+    currentBotMsgId = botId;
+    botBuffers[botId] = "";
+    createBotBubble(botId);
+
+    // Reset typing speed detection for next message
+    keyIntervals = [];
+    lastKeyTime = 0;
+
+    window.pywebview.api.start_chat_stream(val);
+}
+
+function receiveChunk(chunk, targetId) {
+    const id = targetId || currentBotMsgId;
+    const div = document.getElementById(id);
+    if (div) {
+        botBuffers[id] = (botBuffers[id] || "") + chunk;
+        div.innerHTML = marked.parse(botBuffers[id]);
+        scrollToBottom();
+    }
+}
+
+function createBotBubble(id) {
+    const container = document.getElementById('chat-history');
+    const wrapper = document.createElement('div');
+    wrapper.className = "message-wrapper bot-wrapper";
+    wrapper.setAttribute('data-msg-id', id);
+    wrapper.innerHTML = `
+        <div class="message bot" id="${id}"><span class="loading-dots">Thinking</span></div>
+        <button class="checkpoint-btn" onclick="toggleCheckpoint('${id}')" title="Checkpoint this answer">✓</button>
+    `;
+    container.appendChild(wrapper);
+    animateMessage(wrapper);
+    scrollToBottom();
+
+    // Create corresponding sidebar block
+    createCheckpointBlock(id);
+}
+
+function clearBubble(id) {
+    const div = document.getElementById(id);
+    if (div) {
+        div.innerHTML = "";
+        botBuffers[id] = "";
+    }
+}
+
+function appendMessage(role, text, animate = true) {
+    if (role === 'bot') {
+        const id = 'bot-' + Math.random().toString(36).substr(2, 9);
+        botBuffers[id] = text;
+        createBotBubble(id);
+        document.getElementById(id).innerHTML = marked.parse(text);
+    } else {
+        const container = document.getElementById('chat-history');
+        const wrapper = document.createElement('div');
+        wrapper.className = "message-wrapper user-wrapper";
+        wrapper.innerHTML = `<div class="message user">${text.replace(/</g, "&lt;")}</div>`;
+        container.appendChild(wrapper);
+        if (animate) {
+            animateMessage(wrapper);
+        }
+    }
+    scrollToBottom();
+}
+
+function animateMessage(wrapper) {
+    anime({
+        targets: wrapper,
+        opacity: [0, 1],
+        translateY: [10, 0],
+        duration: 300,
+        easing: 'easeOutQuad'
+    });
+}
+
+function scrollToBottom() {
+    document.getElementById('chat-history').scrollTop = document.getElementById('chat-history').scrollHeight;
+}
+
+function receiveError(e) {
+    showAlertModal("Error: " + e, "Error", "❌");
+}
+
+function streamComplete(tone) {
+    // Apply tone-based styling if provided
+    if (currentBotMsgId && tone) {
+        applyToneToMessage(currentBotMsgId, tone);
+    }
+
+    // Update the tooltip for the checkpoint block
+    updateCheckpointTooltip(currentBotMsgId);
+
+    currentBotMsgId = null;
+}
+
+// ========================================
+// CHECKPOINT SIDEBAR FUNCTIONALITY
+// ========================================
+let checkpointedMessages = new Set();
+
+function createCheckpointBlock(msgId) {
+    const container = document.getElementById('checkpoint-blocks');
+    const block = document.createElement('div');
+    block.className = 'checkpoint-block';
+    block.id = `checkpoint-${msgId}`;
+    block.setAttribute('data-msg-id', msgId);
+    block.setAttribute('data-tooltip', 'Loading...');
+    block.onclick = () => navigateToMessage(msgId);
+    container.appendChild(block);
+
+    // Animate block appearance
+    anime({
+        targets: block,
+        opacity: [0, 1],
+        translateX: [10, 0],
+        duration: 300,
+        easing: 'easeOutQuad'
+    });
+}
+
+function updateCheckpointTooltip(msgId) {
+    const block = document.getElementById(`checkpoint-${msgId}`);
+    const msgDiv = document.getElementById(msgId);
+    if (block && msgDiv) {
+        // Get first 30 chars of text content as tooltip
+        const text = msgDiv.textContent.trim();
+        const preview = text.length > 30 ? text.substring(0, 30) + '...' : text;
+        block.setAttribute('data-tooltip', preview || 'Answer');
+    }
+}
+
+function toggleCheckpoint(msgId) {
+    const btn = document.querySelector(`.message-wrapper[data-msg-id="${msgId}"] .checkpoint-btn`);
+    const block = document.getElementById(`checkpoint-${msgId}`);
+
+    if (checkpointedMessages.has(msgId)) {
+        // Uncheck
+        checkpointedMessages.delete(msgId);
+        btn?.classList.remove('checked');
+        block?.classList.remove('checked');
+    } else {
+        // Check
+        checkpointedMessages.add(msgId);
+        btn?.classList.add('checked');
+        block?.classList.add('checked');
+
+        // Animate the check
+        if (block) {
+            anime({
+                targets: block,
+                scale: [1.3, 1],
+                duration: 300,
+                easing: 'easeOutBack'
+            });
+        }
+    }
+}
+
+function navigateToMessage(msgId) {
+    const msgElement = document.getElementById(msgId);
+    if (msgElement) {
+        msgElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+
+        // Highlight briefly
+        anime({
+            targets: msgElement,
+            boxShadow: ['0 0 0 2px var(--accent)', '0 0 0 0px transparent'],
+            duration: 1000,
+            easing: 'easeOutQuad'
+        });
+    }
+}
+
+// Setup scroll sync between chat and checkpoint sidebar
+function setupScrollSync() {
+    const chatHistory = document.getElementById('chat-history');
+    const checkpointBlocks = document.getElementById('checkpoint-blocks');
+
+    if (!chatHistory || !checkpointBlocks) return;
+
+    chatHistory.addEventListener('scroll', () => {
+        // Calculate scroll percentage
+        const scrollPercent = chatHistory.scrollTop / (chatHistory.scrollHeight - chatHistory.clientHeight);
+
+        // Find which message is most visible
+        const wrappers = chatHistory.querySelectorAll('.message-wrapper.bot-wrapper');
+        const chatRect = chatHistory.getBoundingClientRect();
+        const chatCenter = chatRect.top + chatRect.height / 2;
+
+        let closestWrapper = null;
+        let closestDistance = Infinity;
+
+        wrappers.forEach(wrapper => {
+            const rect = wrapper.getBoundingClientRect();
+            const distance = Math.abs(rect.top + rect.height / 2 - chatCenter);
+            if (distance < closestDistance) {
+                closestDistance = distance;
+                closestWrapper = wrapper;
+            }
+        });
+
+        // Update active state on blocks
+        document.querySelectorAll('.checkpoint-block').forEach(block => {
+            block.classList.remove('active');
+        });
+
+        if (closestWrapper) {
+            const msgId = closestWrapper.getAttribute('data-msg-id');
+            const activeBlock = document.getElementById(`checkpoint-${msgId}`);
+            if (activeBlock) {
+                activeBlock.classList.add('active');
+            }
+        }
+    });
+}
+
+// Initialize scroll sync when ready
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupScrollSync);
+} else {
+    setupScrollSync();
+}
+
+
+// ============================================================
+// BONSAI 8B — ZERO-CLICK AUTO-SETUP
+// ============================================================
+
+// Guard: only trigger setup once per session even if provider is
+// re-selected.  Reset to false on error so the user can retry.
+let _bonsaiSetupTriggered = false;
+
+async function triggerBonsaiAutoSetup() {
+    // If already in progress, do nothing
+    if (_bonsaiSetupTriggered) return;
+
+    // If server is already up (e.g. user re-opens Settings), just show ready
+    try {
+        const status = await window.pywebview.api.get_local_model_status();
+        if (status.server_running) {
+            onBonsaiSetupProgress('ready', 100, 'Paramodus is ready');
+            return;
+        }
+    } catch (e) { /* ignore — pywebview not ready yet */ }
+
+    _bonsaiSetupTriggered = true;
+    await window.pywebview.api.begin_auto_setup();
+}
+
+// Called from Python: onBonsaiSetupProgress(phase, pct, msg)
+// Phases: 'downloading' | 'starting' | 'ready' | 'error'
+function onBonsaiSetupProgress(phase, pct, msg) {
+    const dot     = document.getElementById('bonsai-status-dot');
+    const text    = document.getElementById('bonsai-status-text');
+    const overlay = document.getElementById('bonsai-setup-overlay');
+    const fill    = document.getElementById('setup-overlay-fill');
+    const label   = document.getElementById('setup-overlay-label');
+
+    if (phase === 'downloading') {
+        // Show full-screen overlay with progress bar
+        overlay.classList.add('visible');
+        fill.style.width  = Math.max(0, pct) + '%';
+        label.textContent = msg;
+        dot.className     = 'status-dot status-busy';
+        text.textContent  = `Downloading… ${pct > 0 ? pct.toFixed(1) + '%' : ''}`;
+
+    } else if (phase === 'starting') {
+        // Download done, server loading — dismiss overlay, show status dot
+        overlay.classList.remove('visible');
+        dot.className    = 'status-dot status-busy';
+        text.textContent = 'Loading model… (may take 2–5 min first time)';
+
+    } else if (phase === 'ready') {
+        overlay.classList.remove('visible');
+        dot.className    = 'status-dot status-online';
+        text.textContent = 'Paramodus is ready';
+        _bonsaiSetupTriggered = false;
+
+    } else if (phase === 'error') {
+        overlay.classList.remove('visible');
+        dot.className    = 'status-dot status-error';
+        text.textContent = msg;
+        _bonsaiSetupTriggered = false;
+        // Show retry button so the user can try again without restarting
+        const retryBtn = document.getElementById('btn-bonsai-retry');
+        if (retryBtn) retryBtn.style.display = 'block';
+    }
+}
+
+async function retryBonsaiSetup() {
+    const retryBtn = document.getElementById('btn-bonsai-retry');
+    if (retryBtn) retryBtn.style.display = 'none';
+    _bonsaiSetupTriggered = false;
+    await triggerBonsaiAutoSetup();
+}
+
+// ========================================
+// SPACES MANAGEMENT
+// ========================================
+
+let currentSpaces = [];
+let selectedSpaceId = null;
+
+async function loadSpaces() {
+    try {
+        currentSpaces = await window.pywebview.api.list_spaces();
+        renderSpaces();
+    } catch (e) {
+        console.warn("Failed to load spaces", e);
+    }
+}
+
+function renderSpaces() {
+    const list = document.getElementById('spaces-list');
+    list.innerHTML = '';
+    
+    // "General" / All space
+    const genDiv = document.createElement('div');
+    genDiv.className = `space-item ${selectedSpaceId === null ? 'active' : ''}`;
+    genDiv.innerHTML = `<span>📁</span> General`;
+    genDiv.onclick = () => selectSpace(null);
+    list.appendChild(genDiv);
+
+    currentSpaces.forEach(space => {
+        const safeName = space.name.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const safeDesc = space.description ? space.description.replace(/</g, "&lt;").replace(/>/g, "&gt;") : "";
+        
+        const div = document.createElement('div');
+        div.className = `space-item ${selectedSpaceId === space.id ? 'active' : ''}`;
+        div.title = safeDesc;
+        div.innerHTML = `
+            <span>🚀</span> <span style="flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${safeName}</span>
+            <button class="btn-delete-space" onclick="deleteSpace(event, '${space.id}')" title="Delete Space">×</button>
+        `;
+        div.onclick = () => selectSpace(space.id);
+        list.appendChild(div);
+    });
+}
+
+async function selectSpace(spaceId) {
+    selectedSpaceId = spaceId;
+    renderSpaces();
+    loadSessionList(); // reload sessions to filter if necessary
+    
+    // Start a new chat automatically in this space
+    newChat();
+}
+
+async function deleteSpace(event, spaceId) {
+    event.stopPropagation();
+    
+    // We can reuse the confirm modal or just use a standard one for now
+    if (!confirm("Are you sure you want to delete this space? The chats inside will be moved to General.")) return;
+    
+    await window.pywebview.api.delete_space(spaceId);
+    if (selectedSpaceId === spaceId) {
+        selectedSpaceId = null;
+    }
+    await loadSpaces();
+    loadSessionList();
+}
+
+function showCreateSpaceModal() {
+    document.getElementById('space-name-input').value = '';
+    document.getElementById('space-desc-input').value = '';
+    document.getElementById('space-inst-input').value = '';
+    
+    const overlay = document.getElementById('create-space-overlay');
+    const modal = document.getElementById('create-space-modal');
+    
+    overlay.style.display = 'flex';
+    void overlay.offsetWidth;
+    overlay.style.opacity = '1';
+    modal.style.transform = 'translateY(0)';
+    
+    const closeBtn = document.getElementById('space-cancel-btn');
+    const confirmBtn = document.getElementById('space-confirm-btn');
+    
+    const close = () => {
+        overlay.style.opacity = '0';
+        modal.style.transform = 'translateY(20px)';
+        setTimeout(() => overlay.style.display = 'none', 200);
+        closeBtn.removeEventListener('click', close);
+        confirmBtn.removeEventListener('click', onConfirm);
+    };
+    
+    const onConfirm = async () => {
+        const name = document.getElementById('space-name-input').value.trim();
+        const desc = document.getElementById('space-desc-input').value.trim();
+        const inst = document.getElementById('space-inst-input').value.trim();
+        
+        if (!name) {
+            showAlertModal("Space name is required.", "Error", "❌");
+            return;
+        }
+        
+        const res = await window.pywebview.api.create_space(name, desc, inst);
+        if (res.status === 'success') {
+            await loadSpaces();
+            selectSpace(res.space_id);
+            close();
+        }
+    };
+    
+    closeBtn.addEventListener('click', close);
+    confirmBtn.addEventListener('click', onConfirm);
+}
