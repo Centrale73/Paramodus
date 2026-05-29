@@ -208,11 +208,15 @@ def _detect_launch_flags() -> dict:
 
     ram_gb = _total_ram_gb()
     if ram_gb <= 8:
-        ctx, batch = 2048, 256       # low-RAM: keep KV cache small, avoid swap
+        # low-RAM: weights are only ~1.1 GB (Q1_0), so a 4096-token KV cache
+        # (~0.6 GB) fits comfortably alongside the OS. Crucially, we must NOT
+        # let llama.cpp auto-fit (-c 0) here: it tries the model's full 64K
+        # native context, computes a ~9 GB KV cache, and aborts on an 8 GB box.
+        ctx, batch = 4096, 256
     elif ram_gb <= 16:
-        ctx, batch = 4096, 512
-    else:
         ctx, batch = 8192, 512
+    else:
+        ctx, batch = 16384, 512
 
     ngl = _detect_discrete_gpu_layers()
 
@@ -601,7 +605,11 @@ class ApiBridge:
                     # perceived-latency win on low-end hardware.
                     "--reasoning-budget", "0",
                     "--reasoning-format", "none",
-                    "--chat-template-kwargs", '{"enable_thinking": false}',
+                    # NOTE: older prism-ml builds took
+                    # --chat-template-kwargs '{"enable_thinking": false}',
+                    # but build b8846+ deprecated that and ignores it (thinking
+                    # stays ON). The current binary wants --reasoning off.
+                    "--reasoning", "off",
                 ]
 
             startupinfo = None
@@ -610,9 +618,15 @@ class ApiBridge:
                 startupinfo = _sp.STARTUPINFO()
                 startupinfo.dwFlags |= _sp.STARTF_USESHOWWINDOW
 
-            # Try -c 0 (auto-fit) first; if the build rejects it and exits
-            # without ever listening, retry once with a fixed RAM-based ctx.
-            ctx_attempts = ["0", str(flags["ctx"])]
+            # Context strategy. -c 0 (auto-fit) is convenient on big machines
+            # but DANGEROUS on low-RAM boxes: it sizes the KV cache for the
+            # model's full 64K native context (~9 GB) and aborts before it ever
+            # listens. So only attempt auto-fit when there's plenty of RAM;
+            # otherwise go straight to the fixed, hardware-scaled context.
+            if flags["ram_gb"] > 16:
+                ctx_attempts = ["0", str(flags["ctx"])]
+            else:
+                ctx_attempts = [str(flags["ctx"])]
             for attempt_idx, ctx_value in enumerate(ctx_attempts):
                 command = _build_command(ctx_value)
                 ctx_label = "auto-fit" if ctx_value == "0" else f"ctx {ctx_value}"
