@@ -40,24 +40,36 @@ def get_google_service(api_name: str, api_version: str):
             creds = Credentials.from_authorized_user_file(_TOKEN_PATH, scopes)
         except Exception:
             pass
-    
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            # Check if current token has all required scopes
-            if set(scopes).issubset(set(creds.scopes)):
-                try:
-                    creds.refresh(Request())
-                except Exception:
-                    flow = InstalledAppFlow.from_client_secrets_file(_CREDENTIALS_PATH, scopes)
-                    creds = flow.run_local_server(port=0)
-            else:
-                # Scopes have expanded, need to re-auth
-                flow = InstalledAppFlow.from_client_secrets_file(_CREDENTIALS_PATH, scopes)
-                creds = flow.run_local_server(port=0)
+
+    # Does the saved token actually cover every scope we need RIGHT NOW?
+    # This must be checked independently of expiry: a token can be perfectly
+    # valid yet under-scoped (e.g. it was minted for Contacts only, and the
+    # user has since enabled Gmail/Calendar/Drive). The previous code only
+    # tested scope coverage inside the 'expired' branch, so a fresh, valid,
+    # under-scoped token slipped straight through and Gmail/Calendar/Drive
+    # silently failed. Treat missing scopes as a reason to re-consent.
+    have_scopes = set(creds.scopes) if (creds and creds.scopes) else set()
+    scopes_covered = set(scopes).issubset(have_scopes)
+
+    def _run_consent():
+        flow = InstalledAppFlow.from_client_secrets_file(_CREDENTIALS_PATH, scopes)
+        return flow.run_local_server(port=0)
+
+    if creds and creds.valid and scopes_covered:
+        pass  # token is good and broad enough — nothing to do
+    else:
+        if creds and creds.expired and creds.refresh_token and scopes_covered:
+            # Only a plain refresh is safe when scopes already match.
+            try:
+                creds.refresh(Request())
+            except Exception:
+                creds = _run_consent()
         else:
-            flow = InstalledAppFlow.from_client_secrets_file(_CREDENTIALS_PATH, scopes)
-            creds = flow.run_local_server(port=0)
-        
+            # Either no token, an invalid one, or scopes have expanded since
+            # the token was issued -> full interactive re-consent for the
+            # complete current scope set.
+            creds = _run_consent()
+
         with open(_TOKEN_PATH, "w") as f:
             f.write(creds.to_json())
 
