@@ -74,7 +74,7 @@ if __name__ == '__main__':
 
 
     window = webview.create_window(
-        "Paramodus",
+        "BonsaiChat",
         html_path,
         js_api=api,
         width=1100,

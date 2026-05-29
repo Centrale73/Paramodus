@@ -53,7 +53,7 @@ DEFAULT_CHUNKER = RecursiveChunking(chunk_size=700, overlap=100)
 #   • Avoid redundant negations ("do NOT claim you cannot…") — state the
 #     positive action instead.
 BASE_INSTRUCTIONS = """\
-You are Paramodus AI , a concise and precise assistant.
+You are BonsaiChat, a concise and precise assistant powered by the Bonsai model.
 
 Rules (follow in order):
 1. DOCUMENTS — When the user mentions files, data, or "provided documents", \

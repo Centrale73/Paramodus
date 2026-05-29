@@ -857,7 +857,7 @@ async function triggerBonsaiAutoSetup() {
     try {
         const status = await window.pywebview.api.get_local_model_status();
         if (status.server_running) {
-            onBonsaiSetupProgress('ready', 100, 'Paramodus is ready');
+            onBonsaiSetupProgress('ready', 100, 'Bonsai is ready');
             return;
         }
     } catch (e) { /* ignore — pywebview not ready yet */ }
@@ -892,7 +892,7 @@ function onBonsaiSetupProgress(phase, pct, msg) {
     } else if (phase === 'ready') {
         overlay.classList.remove('visible');
         dot.className    = 'status-dot status-online';
-        text.textContent = 'Paramodus is ready';
+        text.textContent = 'Bonsai is ready';
         _bonsaiSetupTriggered = false;
 
     } else if (phase === 'error') {

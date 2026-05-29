@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Paramodus</title>
+    <title>BonsaiChat</title>
     <link rel="stylesheet" href="css/style.css">
 </head>
 
@@ -92,7 +92,7 @@
                     </div>
                 </div>
 
-                <!-- Local model: Paramodus panel -->
+                <!-- Local model: Bonsai panel -->
                 <div id="bonsai-panel" style="margin-top: 20px;">
                     <div class="bonsai-status-bar" id="bonsai-status-bar">
                         <span id="bonsai-status-dot" class="status-dot status-offline"></span>
@@ -105,7 +105,7 @@
                     <label class="config-label" style="margin-top:14px; display:block;">Model size</label>
                     <div class="custom-dropdown" id="model-variant-dropdown">
                         <div class="dropdown-selected" data-value="8b" onclick="toggleModelVariantDropdown()">
-                            <span class="selected-text" id="model-variant-text">Paramodus 8B</span>
+                            <span class="selected-text" id="model-variant-text">Bonsai 8B</span>
                         </div>
                         <div class="dropdown-options" id="model-variant-options">
                             <!-- populated by loadModelVariants() -->
@@ -128,7 +128,7 @@
 
             <button class="btn-clear" onclick="clearRag()">Clear Context</button>
 
-            <div class="attribution" style="margin-top: 30px; font-size: 0.7rem; color: #666; font-family: monospace; line-height: 1.3; border-top: 1px solid #333; padding-top: 15px; white-space: pre-wrap; word-wrap: break-word;">Paramodus incorporates the Bonsai 8B model.
+            <div class="attribution" style="margin-top: 30px; font-size: 0.7rem; color: #666; font-family: monospace; line-height: 1.3; border-top: 1px solid #333; padding-top: 15px; white-space: pre-wrap; word-wrap: break-word;">BonsaiChat is a local interface for the Bonsai model by PrismML. Bonsai is a trademark of PrismML; this project is an independent integration and is not affiliated with or endorsed by PrismML.
 Copyright (c) 2026 PrismML.
 
 This product includes software developed by PrismML (https://prismml.com).
@@ -274,7 +274,7 @@ limitations under the License.</div>
     <!-- Main Content -->
     <div id="main-content">
         <div class="header">
-            <div class="logo">Paramodus</div>
+            <div class="logo">BonsaiChat</div>
             <div class="header-controls">
                 <button class="new-chat-btn" onclick="newChat()" title="Start a new conversation">+ New Chat</button>
             </div>
@@ -299,8 +299,8 @@ limitations under the License.</div>
     <!-- First-run setup overlay -->
     <div id="bonsai-setup-overlay">
         <div class="setup-overlay-inner">
-            <h2 class="setup-heading">Setting up Paramodus AI</h2>
-            <p class="setup-sub">Downloading the model — this only happens once.<br>After this, Paramodus runs fully offline, forever.</p>
+            <h2 class="setup-heading">Setting up BonsaiChat</h2>
+            <p class="setup-sub">Downloading the Bonsai model — this only happens once.<br>After this, BonsaiChat runs fully offline, forever.</p>
             <div class="progress-bar-bg setup-progress-bar">
                 <div class="progress-bar-fill" id="setup-overlay-fill" style="width:0%"></div>
             </div>

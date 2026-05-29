@@ -59,9 +59,9 @@ def _agent_module():
 # and the Q1_0 (1-bit) quant inside is named Bonsai-<N>-Q1_0.gguf. 'file' is the
 # local on-disk name we resolve in models/; 'repo'/'hf' build the download URL.
 _BONSAI_VARIANTS = {
-    "8b":  {"file": "Bonsai-8B.gguf",   "repo": "prism-ml/Bonsai-8B-gguf",   "hf": "Bonsai-8B-Q1_0.gguf",   "label": "Paramodus 8B"},
-    "4b":  {"file": "Bonsai-4B.gguf",   "repo": "prism-ml/Bonsai-4B-gguf",   "hf": "Bonsai-4B-Q1_0.gguf",   "label": "Paramodus 4B"},
-    "1.7b":{"file": "Bonsai-1.7B.gguf", "repo": "prism-ml/Bonsai-1.7B-gguf", "hf": "Bonsai-1.7B-Q1_0.gguf", "label": "Paramodus 1.7B (fast)"},
+    "8b":  {"file": "Bonsai-8B.gguf",   "repo": "prism-ml/Bonsai-8B-gguf",   "hf": "Bonsai-8B-Q1_0.gguf",   "label": "Bonsai 8B"},
+    "4b":  {"file": "Bonsai-4B.gguf",   "repo": "prism-ml/Bonsai-4B-gguf",   "hf": "Bonsai-4B-Q1_0.gguf",   "label": "Bonsai 4B"},
+    "1.7b":{"file": "Bonsai-1.7B.gguf", "repo": "prism-ml/Bonsai-1.7B-gguf", "hf": "Bonsai-1.7B-Q1_0.gguf", "label": "Bonsai 1.7B (fast)"},
 }
 
 
@@ -751,7 +751,7 @@ class ApiBridge:
     # Stub out download methods (model is shipped or user places it manually)
     def download_bonsai(self, model_key: str = "bonsai-8b") -> dict:
         return {"status": "not_applicable",
-                "message": "Paramodus does not auto-download. Place the .gguf in models/."}
+                "message": "BonsaiChat does not auto-download. Place the .gguf in models/."}
 
     def cancel_download_bonsai(self, model_key: str = "bonsai-8b") -> dict:
         return {"status": "not_applicable"}
