@@ -392,16 +392,27 @@ class ApiBridge:
                     import crm.scheduler
                     crm.scheduler.GOOGLE_CALENDAR_ENABLED = val
             
-            # If any are true, trigger auth
+            # If any are true, trigger auth. run_local_server() BLOCKS until the
+            # user finishes (or abandons) the browser consent screen, so we must
+            # NOT run it on the pywebview API thread — doing so freezes the whole
+            # window (and can deadlock WebView2) until consent completes. Run it
+            # on a daemon thread so the UI stays responsive and returns instantly.
             if any(settings.values()):
-                from crm.google_auth import trigger_auth
-                trigger_auth()
-                
-                if settings.get("google_calendar_enabled"):
-                    from crm import start_scheduler
-                    start_scheduler()
-                    
-            return {"status": "success", "settings": settings}
+                def _auth_then_schedule():
+                    try:
+                        from crm.google_auth import trigger_auth
+                        trigger_auth()
+                        if settings.get("google_calendar_enabled"):
+                            from crm import start_scheduler
+                            start_scheduler()
+                    except Exception as e:
+                        print(f"[CRM Auth] Background auth failed: {e}")
+
+                threading.Thread(target=_auth_then_schedule,
+                                 daemon=True, name="google-oauth").start()
+
+            return {"status": "success", "settings": settings,
+                    "auth_started": any(settings.values())}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
