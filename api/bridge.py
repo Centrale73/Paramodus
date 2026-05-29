@@ -55,10 +55,13 @@ def _agent_module():
 # the "fast mode" that runs 3-4x faster on low-end CPUs. The variant is chosen
 # via the BONSAI_MODEL env var ("8b" | "4b" | "1.7b"), which the Settings UI
 # sets through set_model_variant() below. Defaults to 8b for back-compat.
+# Each size is published in its OWN Hugging Face repo (prism-ml/Bonsai-<N>-gguf),
+# and the Q1_0 (1-bit) quant inside is named Bonsai-<N>-Q1_0.gguf. 'file' is the
+# local on-disk name we resolve in models/; 'repo'/'hf' build the download URL.
 _BONSAI_VARIANTS = {
-    "8b":  {"file": "Bonsai-8B.gguf",   "hf": "Bonsai-8B-Q1_0.gguf",   "label": "Paramodus 8B"},
-    "4b":  {"file": "Bonsai-4B.gguf",   "hf": "Bonsai-4B-Q1_0.gguf",   "label": "Paramodus 4B"},
-    "1.7b":{"file": "Bonsai-1.7B.gguf", "hf": "Bonsai-1.7B-Q1_0.gguf", "label": "Paramodus 1.7B (fast)"},
+    "8b":  {"file": "Bonsai-8B.gguf",   "repo": "prism-ml/Bonsai-8B-gguf",   "hf": "Bonsai-8B-Q1_0.gguf",   "label": "Paramodus 8B"},
+    "4b":  {"file": "Bonsai-4B.gguf",   "repo": "prism-ml/Bonsai-4B-gguf",   "hf": "Bonsai-4B-Q1_0.gguf",   "label": "Paramodus 4B"},
+    "1.7b":{"file": "Bonsai-1.7B.gguf", "repo": "prism-ml/Bonsai-1.7B-gguf", "hf": "Bonsai-1.7B-Q1_0.gguf", "label": "Paramodus 1.7B (fast)"},
 }
 
 
@@ -72,8 +75,8 @@ def _model_filename() -> str:
 
 
 def _model_download_url() -> str:
-    hf = _BONSAI_VARIANTS[_active_variant()]["hf"]
-    return f"https://huggingface.co/prism-ml/Bonsai-8B-gguf/resolve/main/{hf}"
+    meta = _BONSAI_VARIANTS[_active_variant()]
+    return f"https://huggingface.co/{meta['repo']}/resolve/main/{meta['hf']}"
 
 
 def _get_server_paths():
