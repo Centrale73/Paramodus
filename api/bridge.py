@@ -1,5 +1,5 @@
 """
-api/bridge.py — BonsaiChat pywebview API bridge.
+app.py — BonsaiChat pywebview API bridge.
 
 Exposes all methods the HTML/JS frontend calls via window.pywebview.api.
 Adapted from Paramodus' bridge but targeting BonsaiChat's simpler, local-only
@@ -235,6 +235,52 @@ class ApiBridge:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    # ------------------------------------------------------------------
+    # CRM — exposed to JS via window.pywebview.api
+    # ------------------------------------------------------------------
+
+    def get_urgent_events(self):
+        """Return all events with urgency tags for the current month."""
+        try:
+            from crm.db import get_urgent_events
+            events = get_urgent_events()
+            return {"events": events}
+        except Exception as e:
+            return {"events": [], "error": str(e)}
+
+    def add_crm_event(self, event_name: str, city: str = "", event_type: str = "",
+                      contact_month_start: int = None, contact_month_end: int = None,
+                      notes: str = ""):
+        """Add a new event/organisation to the CRM."""
+        try:
+            from crm.db import add_event
+            eid = add_event(
+                event_name=event_name,
+                city=city,
+                event_type=event_type,
+                contact_month_start=contact_month_start,
+                contact_month_end=contact_month_end,
+                notes=notes,
+            )
+            return {"status": "success", "id": eid}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def log_crm_contact(self, org_id: int, status: str, summary: str,
+                        follow_up_date: str = "", method: str = "UI"):
+        """Log a contact interaction for an organisation."""
+        try:
+            from crm.db import log_contact
+            lid = log_contact(
+                org_id=org_id,
+                status=status,
+                summary=summary,
+                follow_up_date=follow_up_date,
+                method=method,
+            )
+            return {"status": "success", "id": lid}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
     # ------------------------------------------------------------------
     # Local model / server lifecycle
