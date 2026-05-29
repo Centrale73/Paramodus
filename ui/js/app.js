@@ -27,6 +27,7 @@ window.addEventListener('pywebviewready', async () => {
     animateHeader();
     loadSpaces(); // This will call loadSessionList() after rendering spaces
     loadCrmSettings();
+    loadModelVariants(); // populate the 8B/4B/1.7B model-size selector
 
     // Auto-start Bonsai setup on every launch — no user action needed.
     // triggerBonsaiAutoSetup() is a no-op if the server is already running.
@@ -401,6 +402,72 @@ async function selectLanguage(value, label) {
     // Trigger API call
     console.log("Setting language to:", value);
     await window.pywebview.api.set_language(value);
+}
+
+// ========================================
+// MODEL VARIANT SELECTOR (8B / 4B / 1.7B fast mode)
+// ========================================
+
+function toggleModelVariantDropdown() {
+    const dropdown = document.getElementById('model-variant-dropdown');
+    if (dropdown) dropdown.classList.toggle('open');
+}
+
+// Populate the dropdown from the backend's variant list and mark the active one.
+async function loadModelVariants() {
+    try {
+        const models = await window.pywebview.api.get_bonsai_models();
+        const optsEl = document.getElementById('model-variant-options');
+        const textEl = document.getElementById('model-variant-text');
+        const selEl  = document.querySelector('#model-variant-dropdown .dropdown-selected');
+        if (!optsEl || !Array.isArray(models)) return;
+
+        optsEl.innerHTML = '';
+        models.forEach(m => {
+            const div = document.createElement('div');
+            div.className = 'dropdown-option' + (m.active ? ' selected' : '');
+            div.setAttribute('data-value', m.key);
+            div.textContent = m.name;
+            div.title = m.description || '';
+            div.onclick = () => selectModelVariant(m.key, m.name);
+            optsEl.appendChild(div);
+            if (m.active) {
+                if (textEl) textEl.textContent = m.name;
+                if (selEl)  selEl.setAttribute('data-value', m.key);
+            }
+        });
+    } catch (e) {
+        console.warn('loadModelVariants failed:', e);
+    }
+}
+
+async function selectModelVariant(value, label) {
+    const dropdown = document.getElementById('model-variant-dropdown');
+    const selected = dropdown.querySelector('.dropdown-selected');
+    const selectedText = selected.querySelector('.selected-text');
+
+    selected.setAttribute('data-value', value);
+    selectedText.textContent = label;
+    dropdown.querySelectorAll('.dropdown-option').forEach(opt => {
+        opt.classList.toggle('selected', opt.getAttribute('data-value') === value);
+    });
+    dropdown.classList.remove('open');
+
+    // Switch variant on the backend, then restart the engine so it loads the
+    // newly selected model (downloads on first use). We reuse the existing
+    // setup-progress UI so the user sees download/loading feedback.
+    const res = await window.pywebview.api.set_model_variant(value);
+    if (!res || res.status !== 'ok') {
+        onBonsaiSetupProgress('error', -1,
+            (res && res.message) || 'Could not switch model.');
+        return;
+    }
+    if (res.restart_required) {
+        onBonsaiSetupProgress('starting', 0, 'Switching model…');
+        try { await window.pywebview.api.stop_bonsai(); } catch (e) {}
+        _bonsaiSetupTriggered = false;
+        await triggerBonsaiAutoSetup();
+    }
 }
 
 // ========================================

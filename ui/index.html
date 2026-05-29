@@ -100,6 +100,20 @@
                     </div>
                     <button id="btn-bonsai-retry" class="btn-bonsai-retry" style="display:none;"
                         onclick="retryBonsaiSetup()">↺ Retry</button>
+
+                    <!-- Model variant selector (8B / 4B / 1.7B fast mode) -->
+                    <label class="config-label" style="margin-top:14px; display:block;">Model size</label>
+                    <div class="custom-dropdown" id="model-variant-dropdown">
+                        <div class="dropdown-selected" data-value="8b" onclick="toggleModelVariantDropdown()">
+                            <span class="selected-text" id="model-variant-text">Paramodus 8B</span>
+                        </div>
+                        <div class="dropdown-options" id="model-variant-options">
+                            <!-- populated by loadModelVariants() -->
+                        </div>
+                    </div>
+                    <div style="margin-top:6px; font-size:0.7rem; color:#888; line-height:1.4;">
+                        Smaller models run faster on low-end hardware. Switching downloads the new model on first use and restarts the engine.
+                    </div>
                 </div>
             </div>
 

@@ -51,6 +51,31 @@ def _agent_module():
 # Server path helpers
 # ---------------------------------------------------------------------------
 
+# prism-ml ships three Q1_0 (1-bit) variants. 8B is the most capable; 1.7B is
+# the "fast mode" that runs 3-4x faster on low-end CPUs. The variant is chosen
+# via the BONSAI_MODEL env var ("8b" | "4b" | "1.7b"), which the Settings UI
+# sets through set_model_variant() below. Defaults to 8b for back-compat.
+_BONSAI_VARIANTS = {
+    "8b":  {"file": "Bonsai-8B.gguf",   "hf": "Bonsai-8B-Q1_0.gguf",   "label": "Paramodus 8B"},
+    "4b":  {"file": "Bonsai-4B.gguf",   "hf": "Bonsai-4B-Q1_0.gguf",   "label": "Paramodus 4B"},
+    "1.7b":{"file": "Bonsai-1.7B.gguf", "hf": "Bonsai-1.7B-Q1_0.gguf", "label": "Paramodus 1.7B (fast)"},
+}
+
+
+def _active_variant() -> str:
+    v = (os.environ.get("BONSAI_MODEL") or "8b").strip().lower()
+    return v if v in _BONSAI_VARIANTS else "8b"
+
+
+def _model_filename() -> str:
+    return _BONSAI_VARIANTS[_active_variant()]["file"]
+
+
+def _model_download_url() -> str:
+    hf = _BONSAI_VARIANTS[_active_variant()]["hf"]
+    return f"https://huggingface.co/prism-ml/Bonsai-8B-gguf/resolve/main/{hf}"
+
+
 def _get_server_paths():
     """
     Finds the llama-server binary and the GGUF model.
@@ -78,13 +103,15 @@ def _get_server_paths():
         llama_bin = internal_bin
 
     # --- MODELS ---
+    # Filename depends on the active variant (8b / 4b / 1.7b).
+    model_file = _model_filename()
     # Check next to the EXE first
-    local_model = os.path.join(exe_dir, "models", "Bonsai-8B.gguf")
+    local_model = os.path.join(exe_dir, "models", model_file)
     # Check internal _MEIPASS
-    internal_model = get_resource_path(os.path.join("models", "Bonsai-8B.gguf"))
+    internal_model = get_resource_path(os.path.join("models", model_file))
     # Also check AppData for previously downloaded models
     appdata_dir = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), "Paramodus", "models")
-    appdata_model = os.path.join(appdata_dir, "Bonsai-8B.gguf")
+    appdata_model = os.path.join(appdata_dir, model_file)
     
     if os.path.exists(local_model):
         model_path = local_model
@@ -501,14 +528,38 @@ class ApiBridge:
         }
 
     def get_bonsai_models(self) -> list:
-        return [
-            {
-                "key": "bonsai-8b",
-                "name": "Paramodus 8B",
-                "description": "1-bit quantized LLM — runs entirely on CPU",
+        """List all selectable 1-bit variants for the Settings UI."""
+        active = _active_variant()
+        out = []
+        for key, meta in _BONSAI_VARIANTS.items():
+            out.append({
+                "key": key,
+                "name": meta["label"],
+                "description": {
+                    "8b": "Most capable. ~4-8 tok/s on an older CPU.",
+                    "4b": "Balanced. Roughly 2x faster than 8B.",
+                    "1.7b": "Fast mode. 3-4x faster; best for low-end hardware.",
+                }.get(key, "1-bit quantized LLM — runs entirely on CPU"),
+                "active": key == active,
+            })
+        return out
+
+    def get_model_variant(self) -> str:
+        """Return the currently selected variant key (8b/4b/1.7b)."""
+        return _active_variant()
+
+    def set_model_variant(self, key: str) -> dict:
+        """Switch the active 1-bit variant. Takes effect on next server start;
+        the caller should stop_bonsai() then begin_auto_setup() to apply it.
+        Persisted via the BONSAI_MODEL env var for this process."""
+        key = (key or "").strip().lower()
+        if key not in _BONSAI_VARIANTS:
+            return {"status": "error",
+                    "message": f"Unknown variant '{key}'. Choose 8b, 4b, or 1.7b."}
+        os.environ["BONSAI_MODEL"] = key
+        return {"status": "ok", "active": key,
                 "downloaded": self._is_model_present(),
-            }
-        ]
+                "restart_required": True}
 
     def _is_model_present(self) -> bool:
         _, model_path = _get_server_paths()
@@ -565,11 +616,11 @@ class ApiBridge:
             # 2. Model check
             if not os.path.isfile(model_path):
                 _report("downloading", 0, "Model not found. Starting download from Hugging Face...")
-                # IMPORTANT: fetch the Q1_0 (1-bit, ~1 GB) quant — NOT the repo's
-                # default "Bonsai-8B.gguf", which is the F16 master (~16 GB) and
-                # will not fit in RAM on typical machines. The Q1_0 file is what
-                # makes Bonsai a 1-bit model at runtime.
-                model_url = "https://huggingface.co/prism-ml/Bonsai-8B-gguf/resolve/main/Bonsai-8B-Q1_0.gguf"
+                # IMPORTANT: fetch the Q1_0 (1-bit, ~1 GB) quant for the active
+                # variant — NOT the repo's default F16 master (~16 GB), which
+                # won't fit in RAM. The Q1_0 file is what makes Bonsai 1-bit at
+                # runtime. URL tracks the BONSAI_MODEL variant (8b/4b/1.7b).
+                model_url = _model_download_url()
                 success = self._download_model(model_url, model_path, _report)
                 if not success:
                     return # Error already reported by helper
