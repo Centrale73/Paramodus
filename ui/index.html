@@ -127,6 +127,83 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.</div>
         </div>
+
+        <!-- View: CRM -->
+        <div id="view-crm" class="sidebar-view" style="display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <h4 style="margin:0; font-size:0.9rem; color:var(--text-muted);">CRM — Contacts & Events</h4>
+                <button onclick="crmRefresh()" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:1rem;" title="Refresh">↺</button>
+            </div>
+
+            <!-- Filter bar -->
+            <div style="display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap;">
+                <button class="crm-filter-btn active" onclick="crmSetFilter('all', this)">All</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('green', this)">🟢 Now</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('yellow', this)">🟡 Soon</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('red', this)">🔴 Passed</button>
+            </div>
+
+            <!-- Events table -->
+            <div id="crm-table-container" style="overflow-x:auto;">
+                <table id="crm-table" style="width:100%; border-collapse:collapse; font-size:0.78rem;">
+                    <thead>
+                        <tr style="color:var(--text-muted); text-align:left; border-bottom:1px solid rgba(255,255,255,0.08);">
+                            <th style="padding:6px 4px;">●</th>
+                            <th style="padding:6px 4px;">Ville</th>
+                            <th style="padding:6px 4px;">Événement</th>
+                            <th style="padding:6px 4px;">Contacter</th>
+                            <th style="padding:6px 4px;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="crm-table-body">
+                        <tr><td colspan="5" style="padding:20px; text-align:center; color:var(--text-muted);">Loading…</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Add event button -->
+            <button onclick="crmShowAddEvent()" style="margin-top:14px; width:100%; padding:8px; border-radius:8px; border:1px dashed rgba(255,255,255,0.15); background:transparent; color:var(--text-muted); cursor:pointer; font-size:0.85rem;">+ Add Event</button>
+
+            <!-- Inline add form -->
+            <div id="crm-add-form" style="display:none; margin-top:12px; background:rgba(255,255,255,0.04); border-radius:10px; padding:12px; border:1px solid rgba(255,255,255,0.08);">
+                <input id="crm-add-city" placeholder="Ville" style="width:100%; margin-bottom:6px; padding:7px; border-radius:6px; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:#fff; font-size:0.82rem;">
+                <input id="crm-add-name" placeholder="Nom de l'événement" style="width:100%; margin-bottom:6px; padding:7px; border-radius:6px; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:#fff; font-size:0.82rem;">
+                <input id="crm-add-type" placeholder="Type (Festival, Camp...)" style="width:100%; margin-bottom:6px; padding:7px; border-radius:6px; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:#fff; font-size:0.82rem;">
+                <div style="display:flex; gap:6px; margin-bottom:6px;">
+                    <input id="crm-add-ms" type="number" min="1" max="12" placeholder="Mois début" style="flex:1; padding:7px; border-radius:6px; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:#fff; font-size:0.82rem;">
+                    <input id="crm-add-me" type="number" min="1" max="12" placeholder="Mois fin" style="flex:1; padding:7px; border-radius:6px; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:#fff; font-size:0.82rem;">
+                </div>
+                <textarea id="crm-add-notes" placeholder="Notes (optionnel)" rows="2" style="width:100%; margin-bottom:8px; padding:7px; border-radius:6px; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:#fff; font-size:0.82rem; resize:none;"></textarea>
+                <div style="display:flex; gap:8px;">
+                    <button onclick="crmSubmitAddEvent()" style="flex:1; padding:8px; border-radius:6px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.82rem; font-weight:600;">Ajouter</button>
+                    <button onclick="document.getElementById('crm-add-form').style.display='none'" style="flex:1; padding:8px; border-radius:6px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:var(--text-muted); cursor:pointer; font-size:0.82rem;">Annuler</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- View: Calendar -->
+        <div id="view-calendar" class="sidebar-view" style="display:none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+                <h4 style="margin:0; font-size:0.9rem; color:var(--text-muted);" id="cal-month-label">Mai 2026</h4>
+                <div style="display:flex; gap:6px;">
+                    <button onclick="calPrev()" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:1rem;">‹</button>
+                    <button onclick="calNext()" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:1rem;">›</button>
+                </div>
+            </div>
+
+            <!-- Day headers -->
+            <div style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px; margin-bottom:4px; text-align:center; font-size:0.7rem; color:var(--text-muted);">
+                <span>Di</span><span>Lu</span><span>Ma</span><span>Me</span><span>Je</span><span>Ve</span><span>Sa</span>
+            </div>
+
+            <!-- Calendar grid -->
+            <div id="cal-grid" style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px;"></div>
+
+            <!-- Events for selected day -->
+            <div id="cal-day-events" style="margin-top:14px; font-size:0.8rem; color:var(--text-muted); min-height:40px;">
+                Cliquez sur un jour pour voir les événements.
+            </div>
+        </div>
     </div>
 
     <!-- Sidebar Toggles -->
@@ -140,13 +217,28 @@ limitations under the License.</div>
                 <line x1="3" y1="18" x2="21" y2="18"></line>
             </svg>
         </div>
-        <!-- Settings Toggle (Key) -->
+        <!-- Settings Toggle -->
         <div class="sidebar-toggle-tab" onclick="toggleSidebar('settings')" id="tab-settings" title="Settings">
             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                 stroke-linecap="round" stroke-linejoin="round">
-                <path
-                    d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4">
-                </path>
+                <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+            </svg>
+        </div>
+        <!-- CRM Toggle -->
+        <div class="sidebar-toggle-tab" onclick="toggleSidebar('crm')" id="tab-crm" title="CRM">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M3 15h18M9 3v18"/>
+            </svg>
+        </div>
+        <!-- Calendar Toggle -->
+        <div class="sidebar-toggle-tab" onclick="toggleSidebar('calendar')" id="tab-calendar" title="Calendrier">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="4" width="18" height="18" rx="2"/>
+                <line x1="16" y1="2" x2="16" y2="6"/>
+                <line x1="8" y1="2" x2="8" y2="6"/>
+                <line x1="3" y1="10" x2="21" y2="10"/>
             </svg>
         </div>
     </div>
@@ -173,15 +265,12 @@ limitations under the License.</div>
 
     <!-- Checkpoint Sidebar (Right) -->
     <div id="checkpoint-sidebar">
-        <div class="checkpoint-blocks" id="checkpoint-blocks">
-            <!-- Blocks generated dynamically for each AI answer -->
-        </div>
+        <div class="checkpoint-blocks" id="checkpoint-blocks"></div>
     </div>
 
-    <!-- First-run Paramodus setup overlay (shown during model download) -->
+    <!-- First-run setup overlay -->
     <div id="bonsai-setup-overlay">
         <div class="setup-overlay-inner">
-            <!-- Removed setup leaf emoji -->
             <h2 class="setup-heading">Setting up Paramodus AI</h2>
             <p class="setup-sub">Downloading the model — this only happens once.<br>After this, Paramodus runs fully offline, forever.</p>
             <div class="progress-bar-bg setup-progress-bar">
@@ -198,7 +287,7 @@ limitations under the License.</div>
             <h3 id="custom-alert-title" style="margin:0 0 8px 0; font-size:1.2rem; font-weight:600;">Alert</h3>
             <p id="custom-alert-msg" style="margin:0 0 24px 0; font-size:0.95rem; color:var(--text-secondary); white-space:pre-wrap; word-wrap:break-word;"></p>
             <div style="display:flex; justify-content:center;">
-                <button id="alert-ok-btn" style="padding:10px 30px; border-radius:8px; border:none; background:var(--accent); color:white; cursor:pointer; font-size:0.9rem; font-weight:600; transition:transform 0.2s, box-shadow 0.2s;">OK</button>
+                <button id="alert-ok-btn" style="padding:10px 30px; border-radius:8px; border:none; background:var(--accent); color:white; cursor:pointer; font-size:0.9rem; font-weight:600;">OK</button>
             </div>
         </div>
     </div>
@@ -209,15 +298,13 @@ limitations under the License.</div>
             <div style="font-size:2rem; margin-bottom:12px;">⚠️</div>
             <h3 style="margin:0 0 8px 0; font-size:1.2rem; font-weight:600;">Delete Chat</h3>
             <p style="margin:0 0 24px 0; font-size:0.95rem; color:var(--text-secondary);">Are you sure you want to permanently delete this chat?</p>
-            
             <div style="margin-bottom:20px; font-size:0.85rem; color:var(--text-muted); text-align:left; display:flex; align-items:center; gap:8px; justify-content:center;">
                 <input type="checkbox" id="modal-dont-show-again" style="accent-color:var(--accent); cursor:pointer;">
                 <label for="modal-dont-show-again" style="cursor:pointer;">Don't ask me again</label>
             </div>
-
             <div style="display:flex; justify-content:center; gap:12px;">
-                <button id="modal-cancel-btn" style="padding:10px 20px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:var(--text-primary); cursor:pointer; font-size:0.9rem; transition:background 0.2s;">Cancel</button>
-                <button id="modal-confirm-btn" style="padding:10px 20px; border-radius:8px; border:none; background:rgba(239, 68, 68, 0.2); color:#ef4444; cursor:pointer; font-size:0.9rem; font-weight:600; transition:background 0.2s;">Delete</button>
+                <button id="modal-cancel-btn" style="padding:10px 20px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:var(--text-primary); cursor:pointer; font-size:0.9rem;">Cancel</button>
+                <button id="modal-confirm-btn" style="padding:10px 20px; border-radius:8px; border:none; background:rgba(239, 68, 68, 0.2); color:#ef4444; cursor:pointer; font-size:0.9rem; font-weight:600;">Delete</button>
             </div>
         </div>
     </div>
@@ -226,22 +313,18 @@ limitations under the License.</div>
     <div id="create-space-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.6); backdrop-filter:blur(4px); z-index:9999; justify-content:center; align-items:center; opacity:0; transition:opacity 0.2s;">
         <div id="create-space-modal" style="background:var(--surface); border:var(--glass-border); border-radius:16px; padding:24px; max-width:500px; width:90%; box-shadow:0 12px 40px rgba(0,0,0,0.4); text-align:left; transform:translateY(20px); transition:transform 0.2s;">
             <h3 style="margin:0 0 16px 0; font-size:1.2rem; font-weight:600;">Create a Space</h3>
-            
             <div style="margin-bottom:12px;">
                 <label style="display:block; margin-bottom:4px; font-size:0.85rem; color:var(--text-muted);">Space Name</label>
                 <input type="text" id="space-name-input" style="width:100%; padding:10px; border-radius:8px; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:var(--text-primary); outline:none;" placeholder="e.g. Coding Projects">
             </div>
-
             <div style="margin-bottom:12px;">
                 <label style="display:block; margin-bottom:4px; font-size:0.85rem; color:var(--text-muted);">Description (Optional)</label>
                 <input type="text" id="space-desc-input" style="width:100%; padding:10px; border-radius:8px; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:var(--text-primary); outline:none;" placeholder="A place for my coding work">
             </div>
-
             <div style="margin-bottom:24px;">
                 <label style="display:block; margin-bottom:4px; font-size:0.85rem; color:var(--text-muted);">Custom Instructions (Agent Prompt)</label>
                 <textarea id="space-inst-input" rows="4" style="width:100%; padding:10px; border-radius:8px; background:rgba(0,0,0,0.2); border:1px solid rgba(255,255,255,0.1); color:var(--text-primary); outline:none; resize:vertical; font-family:inherit;" placeholder="e.g. Always write clean, well-commented Python code."></textarea>
             </div>
-
             <div style="display:flex; justify-content:flex-end; gap:12px;">
                 <button id="space-cancel-btn" style="padding:10px 20px; border-radius:8px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:var(--text-primary); cursor:pointer; font-size:0.9rem;">Cancel</button>
                 <button id="space-confirm-btn" style="padding:10px 20px; border-radius:8px; border:none; background:var(--accent); color:white; cursor:pointer; font-size:0.9rem; font-weight:600;">Create</button>
@@ -254,6 +337,7 @@ limitations under the License.</div>
     <script src="marked.min.js"></script>
     <script src="js/app.js"></script>
     <script src="js/crm_settings.js"></script>
+    <script src="js/crm_panel.js"></script>
 </body>
 
 </html>
