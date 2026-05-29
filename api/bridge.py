@@ -561,7 +561,11 @@ class ApiBridge:
             # 2. Model check
             if not os.path.isfile(model_path):
                 _report("downloading", 0, "Model not found. Starting download from Hugging Face...")
-                model_url = "https://huggingface.co/prism-ml/Bonsai-8B-gguf/resolve/main/Bonsai-8B.gguf"
+                # IMPORTANT: fetch the Q1_0 (1-bit, ~1 GB) quant — NOT the repo's
+                # default "Bonsai-8B.gguf", which is the F16 master (~16 GB) and
+                # will not fit in RAM on typical machines. The Q1_0 file is what
+                # makes Bonsai a 1-bit model at runtime.
+                model_url = "https://huggingface.co/prism-ml/Bonsai-8B-gguf/resolve/main/Bonsai-8B-Q1_0.gguf"
                 success = self._download_model(model_url, model_path, _report)
                 if not success:
                     return # Error already reported by helper
@@ -574,16 +578,31 @@ class ApiBridge:
                     f"Loading model… {gpu_desc}, {flags['threads']} threads, "
                     f"ctx {flags['ctx']} ({flags['ram_gb']} GB RAM)")
 
-            command = [
-                llama_bin,
-                "-m", model_path,
-                "--host", "127.0.0.1",
-                "--port", "8081",
-                "-ngl", str(flags["ngl"]),
-                "-t", str(flags["threads"]),
-                "--ctx-size", str(flags["ctx"]),
-                "-b", str(flags["batch"]),
-            ]
+            def _build_command(ctx_value):
+                """ctx_value: '0' for auto-fit, or a concrete token count string."""
+                return [
+                    llama_bin,
+                    "-m", model_path,
+                    "--host", "127.0.0.1",
+                    "--port", "8081",
+                    "-ngl", str(flags["ngl"]),
+                    "-t", str(flags["threads"]),
+                    "-c", str(ctx_value),
+                    "-b", str(flags["batch"]),
+                    # Bonsai (Qwen3-based) recommended sampler, from prism-ml's
+                    # canonical start_llama_server.ps1.
+                    "--temp", "0.5",
+                    "--top-p", "0.85",
+                    "--top-k", "20",
+                    "--min-p", "0",
+                    # Disable hidden "thinking" tokens — Bonsai is a Qwen3 model
+                    # and will otherwise burn time reasoning before every reply,
+                    # which on CPU feels like the app is frozen. Biggest
+                    # perceived-latency win on low-end hardware.
+                    "--reasoning-budget", "0",
+                    "--reasoning-format", "none",
+                    "--chat-template-kwargs", '{"enable_thinking": false}',
+                ]
 
             startupinfo = None
             if os.name == "nt":
@@ -591,39 +610,66 @@ class ApiBridge:
                 startupinfo = _sp.STARTUPINFO()
                 startupinfo.dwFlags |= _sp.STARTF_USESHOWWINDOW
 
-            try:
-                self._server_process = subprocess.Popen(
-                    command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    startupinfo=startupinfo,
-                    text=True,
-                    bufsize=1,
-                )
+            # Try -c 0 (auto-fit) first; if the build rejects it and exits
+            # without ever listening, retry once with a fixed RAM-based ctx.
+            ctx_attempts = ["0", str(flags["ctx"])]
+            for attempt_idx, ctx_value in enumerate(ctx_attempts):
+                command = _build_command(ctx_value)
+                ctx_label = "auto-fit" if ctx_value == "0" else f"ctx {ctx_value}"
+                _report("starting", 0, f"Loading model… {ctx_label}")
+                saw_ctx_error = False
+                try:
+                    self._server_process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        startupinfo=startupinfo,
+                        text=True,
+                        bufsize=1,
+                    )
 
-                for line in self._server_process.stdout:
-                    stripped = line.strip()
-                    if stripped:
-                        _report("starting", 0, stripped[:90])
+                    for line in self._server_process.stdout:
+                        stripped = line.strip()
+                        if stripped:
+                            _report("starting", 0, stripped[:90])
 
-                    if "HTTP server error" in line:
-                        _report("error", -1,
-                                "Server failed to start — port 8081 may be in use.")
-                        return
+                        low = line.lower()
+                        # Signs the context flag was rejected by this build.
+                        if ("-c 0" in low or "ctx" in low) and (
+                            "unknown" in low or "invalid" in low or "unsupported" in low
+                        ):
+                            saw_ctx_error = True
 
-                    if "server is listening on" in line:
-                        self._server_ready = True
-                        # Init the Agno agent now that the server is up
-                        try:
-                            _agent_module().init_agent()
-                        except Exception as e:
-                            _report("error", -1, f"Agent init failed: {e}")
+                        if "HTTP server error" in line:
+                            _report("error", -1,
+                                    "Server failed to start — port 8081 may be in use.")
                             return
-                        _report("ready", 100, "Paramodus is ready")
-                        return
 
-            except Exception as e:
-                _report("error", -1, f"Failed to launch server: {e}")
+                        if "server is listening on" in line:
+                            self._server_ready = True
+                            try:
+                                _agent_module().init_agent()
+                            except Exception as e:
+                                _report("error", -1, f"Agent init failed: {e}")
+                                return
+                            _report("ready", 100, "Bonsai is ready")
+                            return
+
+                    # stdout closed without "listening" -> process exited early.
+                    can_retry = attempt_idx + 1 < len(ctx_attempts)
+                    if can_retry and (saw_ctx_error or ctx_value == "0"):
+                        _report("starting", 0,
+                                "Auto-fit context not supported — retrying with a "
+                                "fixed context size…")
+                        continue
+                    _report("error", -1,
+                            "Server exited before it was ready. Check that "
+                            "bin/llama-server.exe is the prism-ml Q1_0 build and "
+                            "models/Bonsai-8B.gguf is the Q1_0 quant.")
+                    return
+                except Exception as e:
+                    _report("error", -1, f"Failed to launch server: {e}")
+                    return
 
         threading.Thread(target=_worker, daemon=True, name="bonsai-server").start()
         return {"status": "started"}
