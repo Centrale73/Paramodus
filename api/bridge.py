@@ -282,6 +282,73 @@ class ApiBridge:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    def get_org_emails(self, org_id: int, limit: int = 5):
+        """Suivi des courriels: return recent Gmail messages for an organisation.
+
+        Looks up the organisation's contact_email, then queries Gmail
+        (read-only) for the most recent messages from that address. Requires
+        the Gmail toggle to be enabled and credentials.json + an authorised
+        token to be present. Never raises to JS — returns a status dict.
+        """
+        try:
+            # Respect the Gmail read-only toggle.
+            if os.environ.get("GOOGLE_GMAIL_ENABLED", "false").lower() != "true":
+                return {
+                    "status": "error",
+                    "message": "Gmail (lecture seule) n'est pas activé. Activez-le dans Réglages.",
+                }
+
+            from crm.db import get_organisation
+            org = get_organisation(org_id)
+            if not org:
+                return {"status": "error", "message": "Organisme introuvable."}
+
+            email = (org.get("contact_email") or "").strip()
+            if not email:
+                return {
+                    "status": "error",
+                    "message": "Aucune adresse courriel enregistrée pour cet organisme.",
+                }
+
+            from crm.google_tools import _get_service
+            service = _get_service("gmail", "v1")
+            if not service:
+                return {
+                    "status": "error",
+                    "message": "Gmail indisponible : identifiants manquants ou autorisation requise.",
+                    "email": email,
+                }
+
+            try:
+                lim = max(1, min(int(limit or 5), 20))
+            except (TypeError, ValueError):
+                lim = 5
+
+            # Pull messages from OR to this address (full thread visibility).
+            query = f"from:{email} OR to:{email}"
+            listing = service.users().messages().list(
+                userId="me", q=query, maxResults=lim
+            ).execute()
+            messages = listing.get("messages", [])
+
+            emails = []
+            for msg in messages:
+                data = service.users().messages().get(
+                    userId="me", id=msg["id"], format="metadata",
+                    metadataHeaders=["Subject", "From", "Date"],
+                ).execute()
+                headers = data.get("payload", {}).get("headers", [])
+                emails.append({
+                    "subject": next((h["value"] for h in headers if h["name"] == "Subject"), "(sans objet)"),
+                    "from": next((h["value"] for h in headers if h["name"] == "From"), ""),
+                    "date": next((h["value"] for h in headers if h["name"] == "Date"), ""),
+                    "snippet": data.get("snippet", ""),
+                })
+
+            return {"status": "success", "emails": emails, "email": email}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     # ------------------------------------------------------------------
     # Local model / server lifecycle
     # ------------------------------------------------------------------

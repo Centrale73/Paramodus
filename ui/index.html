@@ -87,6 +87,9 @@
                             <span class="slider"></span>
                         </label>
                     </div>
+                    <div style="margin-top:8px; padding:8px 10px; border-radius:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.06); font-size:0.7rem; color:#888; line-height:1.4;">
+                        Setup: place your Google OAuth <code style="color:#bbb;">credentials.json</code> (Desktop app type) in the project root. The first time you enable a service, a browser window opens to complete sign-in; a <code style="color:#bbb;">token.json</code> is then saved locally. Nothing is sent anywhere else.
+                    </div>
                 </div>
 
                 <!-- Local model: Paramodus panel -->
@@ -177,6 +180,17 @@ limitations under the License.</div>
                 <div style="display:flex; gap:8px;">
                     <button onclick="crmSubmitAddEvent()" style="flex:1; padding:8px; border-radius:6px; border:none; background:var(--accent); color:#fff; cursor:pointer; font-size:0.82rem; font-weight:600;">Ajouter</button>
                     <button onclick="document.getElementById('crm-add-form').style.display='none'" style="flex:1; padding:8px; border-radius:6px; border:1px solid rgba(255,255,255,0.1); background:transparent; color:var(--text-muted); cursor:pointer; font-size:0.82rem;">Annuler</button>
+                </div>
+            </div>
+
+            <!-- Suivi des courriels (Gmail, read-only) -->
+            <div id="crm-email-panel" style="display:none; margin-top:14px; background:rgba(255,255,255,0.04); border-radius:10px; padding:12px; border:1px solid rgba(255,255,255,0.08);">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <h5 id="crm-email-title" style="margin:0; font-size:0.82rem; font-weight:600; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">Courriels</h5>
+                    <button onclick="crmHideEmails()" style="background:transparent; border:none; color:var(--text-muted); cursor:pointer; font-size:1rem; line-height:1;" title="Fermer">×</button>
+                </div>
+                <div id="crm-email-body" style="max-height:240px; overflow-y:auto;">
+                    <div style="color:var(--text-muted); padding:8px;">Chargement des courriels…</div>
                 </div>
             </div>
         </div>
@@ -336,7 +350,6 @@ limitations under the License.</div>
     <script src="anime.min.js"></script>
     <script src="marked.min.js"></script>
     <script src="js/app.js"></script>
-    <script src="js/crm_settings.js"></script>
     <script src="js/crm_panel.js"></script>
 </body>
 

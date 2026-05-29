@@ -277,39 +277,70 @@ function applyToneToMessage(messageId, tone) {
 // ========================================
 let currentSidebarView = 'chats';
 
+// All sidebar views and their toggle tabs share the same id convention:
+//   panel:  #view-<name>     tab: #tab-<name>
+// Adding a new view = add it here + matching markup in index.html.
+const SIDEBAR_VIEWS = ['chats', 'settings', 'crm', 'calendar'];
+const SIDEBAR_TITLES = {
+    chats: 'Chats',
+    settings: 'Settings',
+    crm: 'CRM',
+    calendar: 'Calendrier',
+};
+
+function _setActiveSidebarTabs(view) {
+    SIDEBAR_VIEWS.forEach(v => {
+        const tab = document.getElementById(`tab-${v}`);
+        if (tab) tab.classList.toggle('active', v === view);
+    });
+}
+
+function _clearActiveSidebarTabs() {
+    SIDEBAR_VIEWS.forEach(v => {
+        const tab = document.getElementById(`tab-${v}`);
+        if (tab) tab.classList.remove('active');
+    });
+}
+
 function toggleSidebar(view = null) {
     const sidebar = document.getElementById('sidebar');
     const title = document.getElementById('sidebar-title');
 
-    // If no view specified (e.g. close button), just toggle or close
+    // If no view specified (e.g. close button), just close.
     if (!view) {
         sidebar.classList.remove('visible');
+        _clearActiveSidebarTabs();
         updateSidebarPosition();
         return;
     }
 
     // If opening a new view or switching views
     if (!sidebar.classList.contains('visible') || currentSidebarView !== view) {
-        // Update content visibility
-        document.getElementById('view-chats').style.display = view === 'chats' ? 'block' : 'none';
-        document.getElementById('view-settings').style.display = view === 'settings' ? 'block' : 'none';
+        // Show only the chosen panel, hide all others.
+        SIDEBAR_VIEWS.forEach(v => {
+            const panel = document.getElementById(`view-${v}`);
+            if (panel) panel.style.display = (v === view) ? 'block' : 'none';
+        });
 
-        // Update title
-        title.textContent = view === 'chats' ? 'Chats' : 'Settings';
-
-        // Update tabs active state
-        document.getElementById('tab-chats').classList.toggle('active', view === 'chats');
-        document.getElementById('tab-settings').classList.toggle('active', view === 'settings');
+        title.textContent = SIDEBAR_TITLES[view] || 'Chats';
+        _setActiveSidebarTabs(view);
 
         currentSidebarView = view;
         sidebar.classList.add('visible');
-    } else {
-        // Clicking the same tab again closes it
-        sidebar.classList.remove('visible');
 
-        // Remove active state from tabs
-        document.getElementById('tab-chats').classList.remove('active');
-        document.getElementById('tab-settings').classList.remove('active');
+        // Lazy-load data when a data-backed panel opens.
+        if (view === 'crm' && typeof crmRefresh === 'function') {
+            crmRefresh();
+        } else if (view === 'calendar' && typeof crmRefresh === 'function') {
+            // Calendar reads the same crmAllEvents cache; refresh then render.
+            Promise.resolve(crmRefresh()).then(() => {
+                if (typeof calRender === 'function') calRender();
+            });
+        }
+    } else {
+        // Clicking the same tab again closes it.
+        sidebar.classList.remove('visible');
+        _clearActiveSidebarTabs();
     }
 
     updateSidebarPosition();

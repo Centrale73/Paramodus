@@ -195,21 +195,18 @@ def init_agent() -> None:
         )
 
 def get_agent(session_id: str, language: str = 'en') -> Agent:
-    """Return the global agent, initialising it if necessary, and update its language."""
+    """Return the global agent, initialising it if necessary.
+
+    Language is NOT applied here. The agent keeps static BASE_INSTRUCTIONS;
+    per-run language is injected via get_run_kwargs() -> additional_instructions
+    (see _LANGUAGE_INSTRUCTIONS). Mutating the shared singleton's instructions
+    per call was a state-bleed hazard across concurrent sessions, so it was
+    removed. The `language` arg is kept for call-site compatibility.
+    """
     if _agent is None:
         init_agent()
-    # Agno agents carry session context via the DB; just tag the run
+    # Agno agents carry session context via the DB; just tag the run.
     _agent.session_id = session_id
-    
-    # Update language instructions
-    if language == 'fr':
-        _agent.instructions = f"{BASE_INSTRUCTIONS} You MUST reply entirely in French (Français)."
-    elif language == 'es':
-        _agent.instructions = f"{BASE_INSTRUCTIONS} You MUST reply entirely in Spanish (Español)."
-    else:
-        _agent.instructions = BASE_INSTRUCTIONS
-        
-    return _agent
     return _agent
 
 
