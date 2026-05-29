@@ -96,6 +96,142 @@ def _get_server_paths():
     return llama_bin, model_path
 
 
+# ---------------------------------------------------------------------------
+# Adaptive llama-server launch flags
+# ---------------------------------------------------------------------------
+
+def _total_ram_gb() -> float:
+    """Best-effort total system RAM in GB, stdlib only (no psutil)."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class _MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = _MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            return stat.ullTotalPhys / (1024 ** 3)
+        # POSIX (Linux/macOS)
+        if hasattr(os, "sysconf") and "SC_PHYS_PAGES" in os.sysconf_names:
+            return (os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")) / (1024 ** 3)
+    except Exception:
+        pass
+    return 8.0  # conservative fallback
+
+
+def _detect_discrete_gpu_layers() -> int:
+    """Return a sensible -ngl value based on detected hardware.
+
+    Policy (see PR discussion): default to CPU (0). Only offload when a
+    *discrete* GPU with real dedicated VRAM is present. Integrated GPUs
+    (Intel HD/UHD/Iris, AMD Radeon Vega iGPU) share system RAM and are
+    NOT worth offloading an 8B model to — that was the original -ngl 99
+    bug on the Intel HD 530. An explicit BONSAI_NGL env var always wins.
+    """
+    env = os.environ.get("BONSAI_NGL")
+    if env is not None:
+        try:
+            return int(env)
+        except ValueError:
+            pass
+
+    # NVIDIA: if nvidia-smi reports VRAM, it's a real discrete GPU.
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=4,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            vram_mb = max(int(x) for x in out.stdout.split() if x.strip().isdigit())
+            if vram_mb >= 4000:
+                return 99   # offload everything we can
+            if vram_mb >= 2000:
+                return 20   # partial offload for small dGPUs
+    except Exception:
+        pass
+
+    # Windows: inspect adapters; only trust NON-integrated names with real RAM.
+    if os.name == "nt":
+        try:
+            out = subprocess.run(
+                ["wmic", "path", "win32_VideoController",
+                 "get", "Name,AdapterRAM", "/format:csv"],
+                capture_output=True, text=True, timeout=5,
+            )
+            integrated = ("intel", "hd graphics", "uhd graphics", "iris", "vega", "radeon graphics")
+            best_vram = 0
+            for line in out.stdout.splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 3:
+                    continue
+                ram_s, name = parts[1], parts[2].lower()
+                if not ram_s.isdigit():
+                    continue
+                if any(tag in name for tag in integrated):
+                    continue  # iGPU -> never offload
+                best_vram = max(best_vram, int(ram_s) // (1024 ** 2))
+            if best_vram >= 4000:
+                return 99
+            if best_vram >= 2000:
+                return 20
+        except Exception:
+            pass
+
+    return 0  # CPU-only: correct for iGPU / no-GPU machines
+
+
+def _detect_launch_flags() -> dict:
+    """Adaptive llama-server flags scaled to the host hardware.
+
+    All values are overridable via env vars (BONSAI_NGL / BONSAI_THREADS /
+    BONSAI_CTX / BONSAI_BATCH) so power users can A/B test without code
+    changes. Designed to 'just work' across machines: tiny laptops get a
+    conservative CPU config; a box with a real discrete GPU auto-offloads.
+    """
+    logical = os.cpu_count() or 4
+    # llama.cpp generally prefers physical cores; HT logical threads contend
+    # for the same FP units. Estimate physical as half of logical (>2), capped.
+    threads = logical if logical <= 2 else max(2, logical // 2)
+    threads = min(threads, 8)
+
+    ram_gb = _total_ram_gb()
+    if ram_gb <= 8:
+        ctx, batch = 2048, 256       # low-RAM: keep KV cache small, avoid swap
+    elif ram_gb <= 16:
+        ctx, batch = 4096, 512
+    else:
+        ctx, batch = 8192, 512
+
+    ngl = _detect_discrete_gpu_layers()
+
+    # Env overrides (power-user escape hatch).
+    def _env_int(name, default):
+        try:
+            return int(os.environ[name])
+        except (KeyError, ValueError):
+            return default
+
+    return {
+        "ngl": ngl,
+        "threads": _env_int("BONSAI_THREADS", threads),
+        "ctx": _env_int("BONSAI_CTX", ctx),
+        "batch": _env_int("BONSAI_BATCH", batch),
+        "ram_gb": round(ram_gb, 1),
+        "logical_cpus": logical,
+    }
+
 
 # ---------------------------------------------------------------------------
 # Bridge
@@ -430,15 +566,23 @@ class ApiBridge:
                 if not success:
                     return # Error already reported by helper
 
-            # 3. Start server
-            _report("starting", 0, "Loading model into memory…")
+            # 3. Start server with hardware-adaptive flags.
+            flags = _detect_launch_flags()
+            gpu_desc = (f"GPU offload ({flags['ngl']} layers)"
+                        if flags["ngl"] > 0 else "CPU")
+            _report("starting", 0,
+                    f"Loading model… {gpu_desc}, {flags['threads']} threads, "
+                    f"ctx {flags['ctx']} ({flags['ram_gb']} GB RAM)")
 
             command = [
                 llama_bin,
                 "-m", model_path,
                 "--host", "127.0.0.1",
                 "--port", "8081",
-                "-ngl", "99",
+                "-ngl", str(flags["ngl"]),
+                "-t", str(flags["threads"]),
+                "--ctx-size", str(flags["ctx"]),
+                "-b", str(flags["batch"]),
             ]
 
             startupinfo = None
