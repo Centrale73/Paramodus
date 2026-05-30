@@ -35,14 +35,14 @@ async function crmRefresh() {
     try {
         const data = await api.get_urgent_events();
         if (data && data.error) {
-            tbody.innerHTML = `<tr><td colspan="5" style="padding:20px; text-align:center; color:#ef4444;">Erreur CRM : ${data.error}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="7" style="padding:20px; text-align:center; color:#ef4444;">Erreur CRM : ${data.error}</td></tr>`;
             crmAllEvents = [];
             return;
         }
         crmAllEvents = (data && data.events) || [];
         crmRender();
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="5" style="padding:20px; text-align:center; color:#ef4444;">Failed to load CRM data.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:#ef4444;">Failed to load CRM data.</td></tr>';
     }
 }
 
