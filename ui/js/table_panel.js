@@ -4,7 +4,7 @@ let tableColumns = ['Column 1', 'Column 2'];
 let tableRows    = [['', '']];
 
 // Pending CSV parsed data — set during preview, cleared on confirm/dismiss
-let _pendingCSV  = null; // { columns: string[], rows: string[][] }
+let _pendingCSV  = null; // { columns, rows, delim }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Render
@@ -47,7 +47,7 @@ function tableRender() {
                  onkeydown="if(event.key==='Tab'&&!event.shiftKey&&${ci}===${tableColumns.length-1}&&${ri}===tableRows.length-1){event.preventDefault();tableAddRow();}">
         </td>`).join('')}
       <td><button onclick="tableRemoveRow(${ri})"
-                  style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:0.75rem;padding:2px 4px;">🗑</button></td>
+                  style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:0.75rem;padding:2px 4px;">\uD83D\uDDD1</button></td>
     </tr>`).join('');
 }
 
@@ -74,23 +74,23 @@ function tableRenderHead() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function tableAddColumn() {
-  tableColumns.push(`Column ${tableColumns.length + 1}`);
-  tableRows.forEach(r => r.push(''));
+  tableColumns.push('Column ' + (tableColumns.length + 1));
+  tableRows.forEach(function(r) { r.push(''); });
   tableRender();
 }
 
 function tableRemoveColumn(ci) {
   if (tableColumns.length <= 1) return;
   tableColumns.splice(ci, 1);
-  tableRows.forEach(r => r.splice(ci, 1));
+  tableRows.forEach(function(r) { r.splice(ci, 1); });
   tableRender();
 }
 
 function tableAddRow() {
   tableRows.push(new Array(tableColumns.length).fill(''));
   tableRender();
-  setTimeout(() => {
-    const inputs = document.querySelectorAll('#custom-table-body tr:last-child td input');
+  setTimeout(function() {
+    var inputs = document.querySelectorAll('#custom-table-body tr:last-child td input');
     if (inputs[0]) inputs[0].focus();
   }, 30);
 }
@@ -106,114 +106,170 @@ function tableRemoveRow(ri) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CSV Import
+// CSV Parser
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** Minimal CSV parser — handles quoted fields and CRLF/LF line endings. */
+//
+// Handles:
+//   - Comma, semicolon, or tab delimiters (auto-detected)
+//   - Excel "sep=X" first-line hint (common in European exports)
+//   - RFC-4180 quoted fields with escaped double-quotes ("")
+//   - CRLF, LF, CR line endings
+//   - UTF-8 BOM stripping
+//
 function _parseCSV(text) {
-  const lines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  // Strip UTF-8 BOM
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
 
+  var lines    = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  var nonEmpty = lines.filter(function(l) { return l.trim() !== ''; });
+  if (nonEmpty.length === 0) return null;
+
+  // ── Delimiter detection ────────────────────────────────────────────────────
+  var startLine = 0;
+  var delim     = ',';
+
+  var sepHint = nonEmpty[0].match(/^sep=(.)/i);
+  if (sepHint) {
+    delim     = sepHint[1];
+    startLine = 1;
+  } else {
+    var header = nonEmpty[0];
+    var semis  = (header.match(/;/g)  || []).length;
+    var commas = (header.match(/,/g)  || []).length;
+    var tabs   = (header.match(/\t/g) || []).length;
+    if      (semis  > commas && semis  >= tabs)  delim = ';';
+    else if (tabs   > commas && tabs   >= semis)  delim = '\t';
+    // else stays ','
+  }
+
+  // ── RFC-4180 field parser ──────────────────────────────────────────────────
   function parseLine(line) {
-    const fields = [];
-    let cur = '', inQuote = false;
-    for (let i = 0; i < line.length; i++) {
-      const ch = line[i];
+    var fields = [], cur = '', inQuote = false;
+    for (var i = 0; i < line.length; i++) {
+      var ch = line[i];
       if (inQuote) {
         if (ch === '"' && line[i+1] === '"') { cur += '"'; i++; }
-        else if (ch === '"') { inQuote = false; }
-        else { cur += ch; }
+        else if (ch === '"')                  { inQuote = false; }
+        else                                  { cur += ch; }
       } else {
-        if (ch === '"') { inQuote = true; }
-        else if (ch === ',') { fields.push(cur.trim()); cur = ''; }
-        else { cur += ch; }
+        if      (ch === '"')  { inQuote = true; }
+        else if (ch === delim){ fields.push(cur.trim()); cur = ''; }
+        else                  { cur += ch; }
       }
     }
     fields.push(cur.trim());
     return fields;
   }
 
-  const nonEmpty = lines.filter(l => l.trim() !== '');
-  if (nonEmpty.length === 0) return null;
+  var dataLines = nonEmpty.slice(startLine);
+  if (dataLines.length === 0) return null;
 
-  const headers = parseLine(nonEmpty[0]);
-  const rows    = nonEmpty.slice(1).map(l => {
-    const f = parseLine(l);
-    // Pad / truncate to match header count
+  var headers = parseLine(dataLines[0]);
+  var rows    = dataLines.slice(1).map(function(l) {
+    var f = parseLine(l);
     while (f.length < headers.length) f.push('');
     return f.slice(0, headers.length);
   });
 
-  return { columns: headers, rows };
+  return { columns: headers, rows: rows, delim: delim };
 }
 
-/** Called when user drags a file onto the drop zone. */
+// ─────────────────────────────────────────────────────────────────────────────
+// CSV File Handling
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Called when user drags a file onto the drop zone.
 function tableHandleCSVDrop(evt) {
-  const file = evt.dataTransfer && evt.dataTransfer.files && evt.dataTransfer.files[0];
+  var file = evt.dataTransfer && evt.dataTransfer.files && evt.dataTransfer.files[0];
   if (file) tableHandleCSVFile(file);
 }
 
-/** Reads the File object, parses it, shows the preview banner. */
+// Reads the File, tries UTF-8 first then falls back to ISO-8859-1 (Latin-1).
+// Latin-1 covers the vast majority of legacy / European CSV exports
+// (Excel on Windows often saves in the system code page, not UTF-8).
 function tableHandleCSVFile(file) {
   if (!file) return;
-  if (!file.name.toLowerCase().endsWith('.csv') && file.type !== 'text/csv') {
+  var name = file.name.toLowerCase();
+  if (!name.endsWith('.csv') && file.type !== 'text/csv') {
     _tableSetDZLabel('Only .csv files are supported.');
     return;
   }
-  _tableSetDZLabel(`Reading ${file.name}…`);
+  _tableSetDZLabel('Reading ' + file.name + '\u2026');
 
-  const reader = new FileReader();
-  reader.onload = e => {
-    const parsed = _parseCSV(e.target.result);
-    if (!parsed || parsed.columns.length === 0) {
-      _tableSetDZLabel('Could not parse CSV — check the file format.');
-      return;
+  function tryParse(text) {
+    var p = _parseCSV(text);
+    return (p && p.columns.length > 0) ? p : null;
+  }
+
+  function readWith(encoding, cb) {
+    var r = new FileReader();
+    r.onload  = function(e) { cb(e.target.result); };
+    r.onerror = function()  { _tableSetDZLabel('Error reading file.'); };
+    r.readAsText(file, encoding);
+  }
+
+  // First pass: UTF-8
+  readWith('UTF-8', function(utf8Text) {
+    // U+FFFD (replacement char) means the file isn't valid UTF-8
+    if (utf8Text.indexOf('\uFFFD') !== -1) {
+      // Retry with Latin-1
+      readWith('ISO-8859-1', function(latin1Text) {
+        var parsed = tryParse(latin1Text);
+        if (!parsed) { _tableSetDZLabel('Could not parse CSV \u2014 check the file format.'); return; }
+        _pendingCSV = parsed;
+        _showCSVPreview(file.name, parsed, 'ISO-8859-1');
+      });
+    } else {
+      var parsed = tryParse(utf8Text);
+      if (!parsed) { _tableSetDZLabel('Could not parse CSV \u2014 check the file format.'); return; }
+      _pendingCSV = parsed;
+      _showCSVPreview(file.name, parsed, 'UTF-8');
     }
-    _pendingCSV = parsed;
-    _showCSVPreview(file.name, parsed);
-  };
-  reader.onerror = () => { _tableSetDZLabel('Error reading file.'); };
-  reader.readAsText(file);
+  });
 
-  // Reset the file input so the same file can be re-selected
-  const inp = document.getElementById('table-csv-input');
+  // Reset input so same file can be re-selected
+  var inp = document.getElementById('table-csv-input');
   if (inp) inp.value = '';
 }
 
-function _showCSVPreview(filename, parsed) {
-  const preview  = document.getElementById('table-csv-preview');
-  const infoEl   = document.getElementById('table-csv-preview-info');
-  const dzLabel  = document.getElementById('table-dz-label');
+function _showCSVPreview(filename, parsed, encoding) {
+  var preview = document.getElementById('table-csv-preview');
+  var infoEl  = document.getElementById('table-csv-preview-info');
+  var dzLabel = document.getElementById('table-dz-label');
 
-  if (dzLabel) dzLabel.textContent = `📄 ${filename}`;
+  if (dzLabel) dzLabel.textContent = '\uD83D\uDCC4 ' + filename;
 
   if (infoEl) {
-    const colList = parsed.columns.slice(0, 5).join(', ')
-                  + (parsed.columns.length > 5 ? ` … +${parsed.columns.length-5} more` : '');
+    var colList     = parsed.columns.slice(0, 6).join(', ')
+                    + (parsed.columns.length > 6 ? ' \u2026 +' + (parsed.columns.length - 6) + ' more' : '');
+    var delimLabels = { ',': 'comma', ';': 'semicolon', '\t': 'tab' };
+    var delimLabel  = delimLabels[parsed.delim] || parsed.delim;
+    var encBadge    = encoding
+      ? '<span style="margin-left:5px;padding:1px 5px;border-radius:3px;' +
+        'background:rgba(255,255,255,0.07);font-size:0.65rem;">' + encoding + '</span>'
+      : '';
     infoEl.innerHTML =
-      `<b>${parsed.columns.length}</b> column${parsed.columns.length !== 1 ? 's' : ''} · `
-    + `<b>${parsed.rows.length}</b> row${parsed.rows.length !== 1 ? 's' : ''}<br>`
-    + `<span style="font-size:0.68rem;opacity:0.7;">${colList}</span>`;
+      '<b>' + parsed.columns.length + '</b> col' + (parsed.columns.length !== 1 ? 's' : '') +
+      ' &middot; <b>' + parsed.rows.length + '</b> row' + (parsed.rows.length !== 1 ? 's' : '') +
+      ' &middot; ' + delimLabel + '-delimited' + encBadge + '<br>' +
+      '<span style="font-size:0.68rem;opacity:0.7;">' + colList + '</span>';
   }
 
   if (preview) preview.style.display = 'block';
 }
 
-/** User clicked "Load into Table" — replace current table state with parsed CSV. */
+// User confirmed — load CSV data into the table
 function tableConfirmCSV() {
   if (!_pendingCSV) return;
-
   tableColumns = _pendingCSV.columns.slice();
-  tableRows    = _pendingCSV.rows.map(r => r.slice());
-
-  _pendingCSV = null;
+  tableRows    = _pendingCSV.rows.map(function(r) { return r.slice(); });
+  _pendingCSV  = null;
   _dismissCSVPreview();
   tableRender();
-
-  // Auto-send to agent with a confirmation message in the chat
-  _tableSetFeedback('CSV loaded. Use ▶ Send to Agent when ready.', 'var(--accent)', 4000);
+  _tableSetFeedback('CSV loaded. Use \u25B6 Send to Agent when ready.', 'var(--accent)', 5000);
 }
 
-/** User clicked "Dismiss" — discard the pending CSV. */
+// User dismissed — discard pending data
 function tableDismissCSV() {
   _pendingCSV = null;
   _dismissCSVPreview();
@@ -221,22 +277,22 @@ function tableDismissCSV() {
 }
 
 function _dismissCSVPreview() {
-  const preview = document.getElementById('table-csv-preview');
+  var preview = document.getElementById('table-csv-preview');
   if (preview) preview.style.display = 'none';
 }
 
 function _tableSetDZLabel(text) {
-  const el = document.getElementById('table-dz-label');
+  var el = document.getElementById('table-dz-label');
   if (el) el.textContent = text;
 }
 
 function _tableSetFeedback(msg, color, timeout) {
-  const fb = document.getElementById('table-agent-feedback');
+  var fb = document.getElementById('table-agent-feedback');
   if (!fb) return;
-  fb.style.display  = 'block';
-  fb.textContent    = msg;
-  fb.style.color    = color || 'var(--text-muted)';
-  if (timeout) setTimeout(() => { fb.style.display = 'none'; }, timeout);
+  fb.style.display = 'block';
+  fb.textContent   = msg;
+  fb.style.color   = color || 'var(--text-muted)';
+  if (timeout) setTimeout(function() { fb.style.display = 'none'; }, timeout);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -244,46 +300,46 @@ function _tableSetFeedback(msg, color, timeout) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 async function tableSendToAgent() {
-  const api = (window.pywebview && window.pywebview.api) || null;
-  const header   = `| # | ${tableColumns.join(' | ')} |`;
-  const sep      = `|---|${tableColumns.map(() => '---').join('|')}|`;
-  const body     = tableRows.map((r, i) =>
-    `| ${i+1} | ${tableColumns.map((_, ci) => r[ci] || '').join(' | ')} |`
-  ).join('\n');
-  const markdown = `${header}\n${sep}\n${body}`;
+  var api      = (window.pywebview && window.pywebview.api) || null;
+  var header   = '| # | ' + tableColumns.join(' | ') + ' |';
+  var sep      = '|---|' + tableColumns.map(function() { return '---'; }).join('|') + '|';
+  var body     = tableRows.map(function(r, i) {
+    return '| ' + (i+1) + ' | ' + tableColumns.map(function(_, ci) { return r[ci] || ''; }).join(' | ') + ' |';
+  }).join('\n');
+  var markdown = header + '\n' + sep + '\n' + body;
 
   if (!api) {
-    if (typeof appendMessage === 'function') appendMessage('user', `Table data:\n\n${markdown}`);
+    if (typeof appendMessage === 'function') appendMessage('user', 'Table data:\n\n' + markdown);
     return;
   }
 
-  _tableSetFeedback('Sending to agent…', 'var(--text-muted)', 0);
+  _tableSetFeedback('Sending to agent\u2026', 'var(--text-muted)', 0);
 
   try {
-    const res = await api.table_delegate_query(markdown);
+    var res = await api.table_delegate_query(markdown);
     if (res && res.status === 'error') {
-      _tableSetFeedback('❌ ' + res.message, '#ef4444', 0);
+      _tableSetFeedback('\u274C ' + res.message, '#ef4444', 0);
     } else {
-      _tableSetFeedback('✅ Table forwarded to agent.', '#22c55e', 3000);
+      _tableSetFeedback('\u2705 Table forwarded to agent.', '#22c55e', 3000);
     }
-  } catch (e) {
-    _tableSetFeedback('❌ ' + e, '#ef4444', 0);
+  } catch(e) {
+    _tableSetFeedback('\u274C ' + e, '#ef4444', 0);
   }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Drop-zone hover style (injected once)
+// Drop-zone hover styles (injected once at load)
 // ─────────────────────────────────────────────────────────────────────────────
 
 (function _injectDZStyle() {
-  const style = document.createElement('style');
-  style.textContent = `
-    #table-csv-dropzone:hover,
-    #table-csv-dropzone.table-dz-hover {
-      border-color: var(--accent) !important;
-      background: rgba(108,92,231,0.07);
-    }
-  `;
+  var style = document.createElement('style');
+  style.textContent = [
+    '#table-csv-dropzone:hover,',
+    '#table-csv-dropzone.table-dz-hover {',
+    '  border-color: var(--accent) !important;',
+    '  background: rgba(108,92,231,0.07);',
+    '}'
+  ].join('\n');
   document.head.appendChild(style);
 })();
 
@@ -291,4 +347,4 @@ async function tableSendToAgent() {
 // Init
 // ─────────────────────────────────────────────────────────────────────────────
 
-document.addEventListener('DOMContentLoaded', () => tableRender());
+document.addEventListener('DOMContentLoaded', function() { tableRender(); });
