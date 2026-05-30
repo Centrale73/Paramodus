@@ -161,25 +161,45 @@ async function crmShowEmails(orgId, eventName) {
     }
 
     if (!res || res.status !== 'success') {
-        const msg = (res && res.message) || 'Gmail non activé ou identifiants manquants.';
+        const msg = (res && res.message) || 'Impossible de charger les courriels.';
         if (body) body.innerHTML = `<div style="color:var(--text-muted); padding:8px;">${msg}</div>`;
         return;
     }
 
-    const emails = res.emails || [];
+    const emails  = res.emails || [];
+    const isLocal = res.source === 'local';
+
+    // Source badge
+    const sourceBadge = isLocal
+        ? `<div style="font-size:0.68rem; color:#f59e0b; margin-bottom:6px; padding:4px 8px;
+                       background:rgba(245,158,11,0.08); border-radius:4px; border:1px solid rgba(245,158,11,0.2);">
+               ⚠️ Mode local — ${res.note || 'Gmail non connecté'}
+           </div>`
+        : `<div style="font-size:0.68rem; color:#22c55e; margin-bottom:6px;">✓ Gmail synchronisé</div>`;
+
+    // Log email button (always shown in local mode)
+    const logEmailBtn = isLocal
+        ? `<button onclick="crmLogEmailPrompt(${orgId}, '${eventName.replace(/'/g, "\\'")}')" 
+               style="width:100%; margin-top:4px; margin-bottom:8px; padding:6px 10px;
+                      border-radius:6px; border:1px solid rgba(255,255,255,0.12);
+                      background:rgba(255,255,255,0.04); color:var(--text-muted);
+                      font-size:0.75rem; cursor:pointer; text-align:left;">
+               ✉ Journaliser un courriel manuellement
+           </button>`
+        : '';
+
     if (emails.length === 0) {
-        if (body) body.innerHTML = `<div style="color:var(--text-muted); padding:8px;">Aucun courriel récent trouvé${res.email ? ' pour ' + res.email : ''}.</div>`;
+        if (body) body.innerHTML = sourceBadge + logEmailBtn +
+            `<div style="color:var(--text-muted); padding:8px;">Aucun courriel enregistré${res.email ? ' pour ' + res.email : ''}.</div>`;
         return;
     }
 
     if (body) {
-        body.innerHTML = emails.map(m => `
+        body.innerHTML = sourceBadge + logEmailBtn + emails.map(m => `
             <div style="padding:8px; margin-bottom:6px; border-radius:6px; background:rgba(255,255,255,0.04); border-left:2px solid var(--accent, #22c55e);">
                 <div style="font-size:0.8rem; font-weight:500; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${(m.subject || '(sans objet)').replace(/</g, '&lt;')}</div>
-                <div style="font-size:0.72rem; color:#888; margin:2px 0;">${(m.from || '').replace(/</g, '&lt;')} · ${(m.date || '')}</div>
+                <div style="font-size:0.72rem; color:#888; margin:2px 0;">${(m.from || '').replace(/</g, '&lt;')} · ${(m.date || m.sent_date || '')}</div>
                 <div style="font-size:0.72rem; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${(m.snippet || '').replace(/</g, '&lt;')}</div>
-                <button onclick="crmLogContact(${orgId}, '${eventName.replace(/'/g, "\\'")}')"
-                    style="margin-top:6px; font-size:0.7rem; padding:2px 8px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:var(--text-muted); cursor:pointer;">Journaliser depuis ce courriel</button>
             </div>`).join('');
     }
 }
@@ -187,6 +207,28 @@ async function crmShowEmails(orgId, eventName) {
 function crmHideEmails() {
     const panel = document.getElementById('crm-email-panel');
     if (panel) panel.style.display = 'none';
+}
+
+/** Prompt-based manual email logger (local mode replacement for Gmail) */
+async function crmLogEmailPrompt(orgId, eventName) {
+    const subject = prompt(`Objet du courriel pour : ${eventName}`, '');
+    if (!subject) return;
+    const body    = prompt('Corps ou résumé :', '');
+    const fromA   = prompt('De (adresse) :', '');
+    const toA     = prompt('À (adresse) :', '');
+    const api = _crmApi();
+    if (!api) { alert('Backend non prêt.'); return; }
+    try {
+        const res = await api.add_local_email(orgId, subject, body || '', fromA || '', toA || '');
+        if (res && res.status === 'success') {
+            // Refresh email panel
+            crmShowEmails(orgId, eventName);
+        } else {
+            alert('❌ Erreur : ' + ((res && res.message) || 'inconnue'));
+        }
+    } catch(e) {
+        alert('❌ Erreur : ' + e);
+    }
 }
 
 // ─── Fit CIRKANIME ───────────────────────────────────────────────────────────

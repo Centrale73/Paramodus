@@ -466,69 +466,129 @@ class ApiBridge:
             return {"status": "error", "message": str(e)}
 
     def get_org_emails(self, org_id: int, limit: int = 5):
-        """Suivi des courriels: return recent Gmail messages for an organisation.
-
-        Looks up the organisation's contact_email, then queries Gmail
-        (read-only) for the most recent messages from that address. Requires
-        the Gmail toggle to be enabled and credentials.json + an authorised
-        token to be present. Never raises to JS — returns a status dict.
+        """
+        Return recent email interactions for an organisation.
+        Tries Gmail first (if GOOGLE_GMAIL_ENABLED=true and credentials present),
+        falls back to the local email log stored in local_integrations.db.
         """
         try:
-            # Respect the Gmail read-only toggle.
-            if os.environ.get("GOOGLE_GMAIL_ENABLED", "false").lower() != "true":
-                return {
-                    "status": "error",
-                    "message": "Gmail (lecture seule) n'est pas activé. Activez-le dans Réglages.",
-                }
-
             from crm.db import get_organisation
             org = get_organisation(org_id)
             if not org:
                 return {"status": "error", "message": "Organisme introuvable."}
 
             email = (org.get("contact_email") or "").strip()
-            if not email:
-                return {
-                    "status": "error",
-                    "message": "Aucune adresse courriel enregistrée pour cet organisme.",
-                }
+            lim = max(1, min(int(limit or 5), 20))
 
-            from crm.google_tools import _get_service
-            service = _get_service("gmail", "v1")
-            if not service:
-                return {
-                    "status": "error",
-                    "message": "Gmail indisponible : identifiants manquants ou autorisation requise.",
-                    "email": email,
-                }
+            # ── Try Gmail if enabled + credentials present ──────────────────────
+            gmail_on = os.environ.get("GOOGLE_GMAIL_ENABLED", "").lower() in ("1", "true", "yes")
+            if gmail_on and email:
+                try:
+                    from crm.google_tools import _get_service
+                    service = _get_service("gmail", "v1")
+                    if service:
+                        query = f"from:{email} OR to:{email}"
+                        listing = service.users().messages().list(
+                            userId="me", q=query, maxResults=lim
+                        ).execute()
+                        msgs = listing.get("messages", [])
+                        emails = []
+                        for msg in msgs:
+                            data = service.users().messages().get(
+                                userId="me", id=msg["id"], format="metadata",
+                                metadataHeaders=["Subject", "From", "Date"],
+                            ).execute()
+                            hdrs = data.get("payload", {}).get("headers", [])
+                            emails.append({
+                                "subject": next((h["value"] for h in hdrs if h["name"] == "Subject"), "(sans objet)"),
+                                "from":    next((h["value"] for h in hdrs if h["name"] == "From"), ""),
+                                "date":    next((h["value"] for h in hdrs if h["name"] == "Date"), ""),
+                                "snippet": data.get("snippet", ""),
+                            })
+                        return {"status": "success", "emails": emails, "email": email, "source": "gmail"}
+                except Exception as gmail_err:
+                    print(f"[Bridge] Gmail fetch failed, falling back to local: {gmail_err}")
 
-            try:
-                lim = max(1, min(int(limit or 5), 20))
-            except (TypeError, ValueError):
-                lim = 5
+            # ── Local fallback ─────────────────────────────────────────────────
+            from crm.local_integrations import get_local_emails
+            local_emails = get_local_emails(org_id, limit=lim)
+            return {
+                "status": "success",
+                "emails": local_emails,
+                "email":  email,
+                "source": "local",
+                "note":   "Affichage des courriels saisis manuellement. Activez Gmail dans Reglages pour la synchronisation automatique.",
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
-            # Pull messages from OR to this address (full thread visibility).
-            query = f"from:{email} OR to:{email}"
-            listing = service.users().messages().list(
-                userId="me", q=query, maxResults=lim
-            ).execute()
-            messages = listing.get("messages", [])
+    def add_local_email(self, org_id: int, subject: str, body: str = "",
+                        from_addr: str = "", to_addr: str = "", notes: str = ""):
+        """Manually log an email interaction for an organisation."""
+        try:
+            from crm.local_integrations import add_local_email
+            eid = add_local_email(
+                org_id=int(org_id),
+                subject=subject,
+                from_addr=from_addr,
+                to_addr=to_addr,
+                body=body,
+                notes=notes,
+            )
+            return {"status": "success", "id": eid}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
-            emails = []
-            for msg in messages:
-                data = service.users().messages().get(
-                    userId="me", id=msg["id"], format="metadata",
-                    metadataHeaders=["Subject", "From", "Date"],
-                ).execute()
-                headers = data.get("payload", {}).get("headers", [])
-                emails.append({
-                    "subject": next((h["value"] for h in headers if h["name"] == "Subject"), "(sans objet)"),
-                    "from": next((h["value"] for h in headers if h["name"] == "From"), ""),
-                    "date": next((h["value"] for h in headers if h["name"] == "Date"), ""),
-                    "snippet": data.get("snippet", ""),
-                })
+    def add_calendar_event(self, title: str, start_dt: str, end_dt: str, notes: str = ""):
+        """
+        Create a calendar event.
+        Tries Google Calendar first if enabled, falls back to local SQLite store.
+        """
+        try:
+            gcal_on = os.environ.get("GOOGLE_CALENDAR_ENABLED", "").lower() in ("1", "true", "yes")
+            if gcal_on:
+                try:
+                    from crm.google_auth import get_google_service
+                    service = get_google_service("calendar", "v3")
+                    if service:
+                        body = {
+                            "summary":     title,
+                            "description": notes,
+                            "start": {"dateTime": start_dt, "timeZone": "America/Montreal"},
+                            "end":   {"dateTime": end_dt,   "timeZone": "America/Montreal"},
+                            "reminders": {"useDefault": True},
+                        }
+                        created = service.events().insert(calendarId="primary", body=body).execute()
+                        return {
+                            "status": "success",
+                            "source": "google",
+                            "link":   created.get("htmlLink", ""),
+                        }
+                except Exception as gcal_err:
+                    print(f"[Bridge] Google Calendar failed, saving locally: {gcal_err}")
 
-            return {"status": "success", "emails": emails, "email": email}
+            # Local fallback
+            from crm.local_integrations import add_local_calendar_event
+            eid = add_local_calendar_event(title=title, start_dt=start_dt, end_dt=end_dt, notes=notes)
+            return {"status": "success", "source": "local", "id": eid}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def get_local_reminders(self):
+        """Return unread scheduler reminders stored in local_integrations.db."""
+        try:
+            from crm.local_integrations import get_unread_reminders
+            reminders = get_unread_reminders()
+            return {"status": "success", "reminders": reminders}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def acknowledge_reminder(self, reminder_id: int):
+        """Mark a local reminder as read/dismissed."""
+        try:
+            from crm.local_integrations import acknowledge_reminder
+            acknowledge_reminder(int(reminder_id))
+            return {"status": "success"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
