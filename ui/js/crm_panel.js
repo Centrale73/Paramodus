@@ -62,6 +62,10 @@ function crmRender() {
                     style="font-size:0.7rem; padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:var(--text-muted); cursor:pointer;" title="Journaliser un contact">✉</button>
                 <button onclick="crmShowEmails(${e.org_id}, '${(e.event_name || '').replace(/'/g, "\\'")}')"
                     style="font-size:0.7rem; padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:var(--text-muted); cursor:pointer;" title="Voir les courriels récents (Gmail)">📧</button>
+                <button onclick="crmDeleteEvent(event, ${e.id})"
+                    style="font-size:0.7rem; padding:2px 6px; border-radius:4px;
+                           border:1px solid rgba(239,68,68,0.3); background:transparent;
+                           color:#ef4444; cursor:pointer; margin-left:2px;" title="Delete event">🗑</button>
             </td>
         </tr>
     `).join('');
@@ -268,11 +272,18 @@ function calSelectDay(day) {
         eventsEl.innerHTML = `<span style="color:var(--text-muted);">Aucun événement actif en ${MONTHS_FR[calMonth]}.</span>`;
     } else {
         eventsEl.innerHTML =
-            `<div style="font-weight:600; margin-bottom:6px; color:#fff;">${MONTHS_FR[calMonth]} — ${active.length} événement(s) actif(s)</div>` +
+            `<div style="font-weight:600; margin-bottom:6px; color:#fff;">${MONTHS_FR[calMonth]} — ${active.length} event(s)</div>` +
             active.map(e => `
-                <div style="padding:6px 8px; margin-bottom:4px; border-radius:6px; background:rgba(34,197,94,0.1); border-left:2px solid #22c55e;">
-                    <div style="font-size:0.8rem; font-weight:500; color:#fff;">${e.event_name}</div>
-                    <div style="font-size:0.72rem; color:#888;">${e.city} · ${e.best_contact}</div>
+                <div style="padding:6px 8px; margin-bottom:4px; border-radius:6px;
+                            background:rgba(34,197,94,0.1); border-left:2px solid #22c55e;
+                            display:flex; align-items:center; justify-content:space-between;">
+                    <div>
+                        <div style="font-size:0.8rem; font-weight:500; color:#fff;">${e.event_name}</div>
+                        <div style="font-size:0.72rem; color:#888;">${e.city} · ${e.best_contact}</div>
+                    </div>
+                    <button onclick="crmDeleteEvent(event, ${e.id})"
+                        style="background:none;border:none;color:#ef4444;cursor:pointer;font-size:0.85rem;padding:2px 4px;"
+                        title="Delete">🗑</button>
                 </div>`).join('');
     }
 
@@ -407,6 +418,43 @@ function calCancelEvent() {
     _calFormError('');
     calSelectedDay = null;
     calRender();
+}
+
+async function crmDeleteEvent(evt, eventId) {
+  evt.stopPropagation();
+  const confirmed = await showConfirmModal();
+  if (!confirmed) return;
+  const api = _crmApi();
+  if (!api) { alert('Backend not ready.'); return; }
+  try {
+    const res = await api.delete_crm_event(eventId);
+    if (res && res.status === 'success') {
+      crmRefresh();
+    } else {
+      showAlertModal((res && res.message) || 'Delete failed.', 'Error', '❌');
+    }
+  } catch (e) {
+    showAlertModal(String(e), 'Error', '❌');
+  }
+}
+
+async function calDeleteEvent(evt, eventId) {
+  evt.stopPropagation();
+  const confirmed = await showConfirmModal();
+  if (!confirmed) return;
+  const api = _crmApi();
+  if (!api) { alert('Backend not ready.'); return; }
+  try {
+    const res = await api.delete_calendar_event(eventId);
+    if (res && res.status === 'success') {
+      crmRefresh();
+      calRender();
+    } else {
+      showAlertModal((res && res.message) || 'Delete failed.', 'Error', '❌');
+    }
+  } catch (e) {
+    showAlertModal(String(e), 'Error', '❌');
+  }
 }
 
 function calPrev() {

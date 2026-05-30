@@ -4,7 +4,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>BonsaiChat</title>
+    <title>Paramodus</title>
     <link rel="stylesheet" href="css/style.css">
     <style>
         /* ── Calendar inline event-form ─────────────────────────────── */
@@ -278,6 +278,29 @@ limitations under the License.</div>
             </div>
         </div>
 
+        <!-- View: Table -->
+        <div id="view-table" class="sidebar-view" style="display:none;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                <h4 style="margin:0;font-size:0.9rem;color:var(--text-muted);">Custom Table</h4>
+                <button onclick="tableAddColumn()"
+                    style="background:transparent;border:1px solid rgba(255,255,255,0.12);color:var(--accent);
+                           cursor:pointer;font-size:0.75rem;padding:2px 8px;border-radius:4px;">+ Col</button>
+            </div>
+            <div id="table-headers" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;"></div>
+            <div style="overflow-x:auto;">
+                <table id="custom-table" style="width:100%;border-collapse:collapse;font-size:0.78rem;"></table>
+            </div>
+            <div style="display:flex;gap:6px;margin-top:8px;">
+                <button onclick="tableAddRow()"
+                    style="flex:1;padding:5px 0;border-radius:6px;border:1px solid rgba(255,255,255,0.12);
+                           background:transparent;color:var(--text-muted);cursor:pointer;font-size:0.78rem;">+ Row</button>
+                <button onclick="tableSendToAgent()"
+                    style="flex:1;padding:5px 0;border-radius:6px;border:1px solid rgba(108,92,231,0.4);
+                           background:rgba(108,92,231,0.15);color:var(--accent);cursor:pointer;font-size:0.78rem;">▶ Send to Agent</button>
+            </div>
+            <div id="table-agent-feedback" style="display:none;margin-top:8px;font-size:0.75rem;padding:4px 6px;border-radius:4px;background:rgba(0,0,0,0.2);"></div>
+        </div>
+
         <!-- View: Calendar -->
         <div id="view-calendar" class="sidebar-view" style="display:none;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
@@ -405,6 +428,16 @@ limitations under the License.</div>
                 <line x1="3" y1="10" x2="21" y2="10"/>
             </svg>
         </div>
+        <!-- Table Toggle -->
+        <div class="sidebar-toggle-tab" onclick="toggleSidebar('table')" id="tab-table" title="Table">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                stroke-linecap="round" stroke-linejoin="round">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="3" y1="15" x2="21" y2="15"/>
+                <line x1="9" y1="3" x2="9" y2="21"/>
+            </svg>
+        </div>
     </div>
 
     <!-- Main Content -->
@@ -501,6 +534,7 @@ limitations under the License.</div>
     <script src="marked.min.js"></script>
     <script src="js/app.js"></script>
     <script src="js/crm_panel.js"></script>
+    <script src="js/table_panel.js"></script>
 </body>
 
 </html>
