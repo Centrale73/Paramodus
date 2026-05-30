@@ -8,12 +8,28 @@ function _crmApi() {
     return (window.pywebview && window.pywebview.api) || null;
 }
 
+// ─── Status config ────────────────────────────────────────────────────────────
+const CRM_STATUSES = [
+    { label: 'Contacté',            color: '#f59e0b', dot: '●' },
+    { label: 'Intéressé',           color: '#22c55e', dot: '●' },
+    { label: 'Rencontre prévue',    color: '#3b82f6', dot: '●' },
+    { label: '\u00c0 relancer',          color: '#f97316', dot: '●' },
+    { label: 'Refus',               color: '#ef4444', dot: '●' },
+    { label: 'Bon potentiel futur', color: '#a855f7', dot: '\u2605' },
+];
+
+function _statusConfig(label) {
+    return CRM_STATUSES.find(s => s.label === label) || null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function crmRefresh() {
     const tbody = document.getElementById('crm-table-body');
-    tbody.innerHTML = '<tr><td colspan="5" style="padding:20px; text-align:center; color:var(--text-muted);">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-muted);">Loading…</td></tr>';
     const api = _crmApi();
     if (!api) {
-        tbody.innerHTML = '<tr><td colspan="5" style="padding:20px; text-align:center; color:var(--text-muted);">En attente du backend…</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-muted);">En attente du backend…</td></tr>';
         return;
     }
     try {
@@ -47,16 +63,44 @@ function crmRender() {
     }
 
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="padding:20px; text-align:center; color:var(--text-muted);">Aucun événement.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-muted);">Aucun événement.</td></tr>';
         return;
     }
 
-    tbody.innerHTML = filtered.map(e => `
+    tbody.innerHTML = filtered.map(e => {
+        // ── Status dot ────────────────────────────────────────────────────────
+        const sc  = _statusConfig(e.contact_status);
+        const dotColor = sc ? sc.color : 'rgba(255,255,255,0.2)';
+        const dotChar  = sc ? sc.dot  : '●';
+        const statusDot = `
+          <span class="crm-status-dot" data-id="${e.id}" data-status="${(e.contact_status||'').replace(/"/g,'&quot;')}"
+                onclick="crmOpenStatusPicker(event, ${e.id})"
+                title="${e.contact_status || 'Aucun statut'}"
+                style="display:inline-block; cursor:pointer; font-size:1rem;
+                       color:${dotColor}; line-height:1; user-select:none;
+                       transition:transform 0.1s;"
+                onmouseover="this.style.transform='scale(1.3)'"
+                onmouseout="this.style.transform='scale(1)'">${dotChar}</span>`;
+
+        // ── Fit CIRKANIME stars ────────────────────────────────────────────
+        const fit   = Math.max(0, Math.min(5, parseInt(e.fit_cirkanime) || 0));
+        const stars = Array.from({length: 5}, (_, i) => `
+          <span onclick="crmSetFit(event, ${e.id}, ${i+1})"
+                title="${i+1} étoile${i>0?'s':''}"
+                style="cursor:pointer; font-size:0.85rem; color:${i < fit ? '#f59e0b' : 'rgba(255,255,255,0.15)'};
+                       line-height:1; user-select:none; transition:color 0.1s;"
+                onmouseover="crmStarHover(this, ${e.id}, ${i+1})"
+                onmouseout="crmStarOut(${e.id}, ${parseInt(e.fit_cirkanime)||0})">★</span>`
+        ).join('');
+
+        return `
         <tr class="crm-row crm-row-${e.urgency}" data-id="${e.id}">
-            <td style="padding:6px 4px;">${urgencyDot[e.urgency] || '⚪'}</td>
+            <td style="padding:6px 4px; text-align:center;">${urgencyDot[e.urgency] || '⚪'}</td>
             <td style="padding:6px 4px; font-weight:500;">${e.city || '—'}</td>
-            <td style="padding:6px 4px; max-width:140px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${e.event_name}">${e.event_name}</td>
+            <td style="padding:6px 4px; max-width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${e.event_name}">${e.event_name}</td>
             <td style="padding:6px 4px; font-size:0.72rem; color:var(--text-muted);">${e.best_contact || '—'}</td>
+            <td style="padding:6px 4px; text-align:center;" class="crm-status-cell" data-id="${e.id}">${statusDot}</td>
+            <td style="padding:6px 4px; white-space:nowrap;" class="crm-stars-cell" data-id="${e.id}" data-fit="${fit}">${stars}</td>
             <td style="padding:6px 4px; white-space:nowrap;">
                 <button onclick="crmLogContact(${e.org_id}, '${(e.event_name || '').replace(/'/g, "\\'")}')"
                     style="font-size:0.7rem; padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:var(--text-muted); cursor:pointer;" title="Journaliser un contact">✉</button>
@@ -65,10 +109,10 @@ function crmRender() {
                 <button onclick="crmDeleteEvent(event, ${e.id})"
                     style="font-size:0.7rem; padding:2px 6px; border-radius:4px;
                            border:1px solid rgba(239,68,68,0.3); background:transparent;
-                           color:#ef4444; cursor:pointer; margin-left:2px;" title="Delete event">🗑</button>
+                           color:#ef4444; cursor:pointer; margin-left:2px;" title="Supprimer">🗑</button>
             </td>
-        </tr>
-    `).join('');
+        </tr>`;
+    }).join('');
 }
 
 async function crmLogContact(orgId, eventName) {
@@ -143,6 +187,143 @@ async function crmShowEmails(orgId, eventName) {
 function crmHideEmails() {
     const panel = document.getElementById('crm-email-panel');
     if (panel) panel.style.display = 'none';
+}
+
+// ─── Fit CIRKANIME ───────────────────────────────────────────────────────────
+
+/** Hover: light up stars 1…n */
+function crmStarHover(el, eventId, n) {
+    const cell = document.querySelector(`.crm-stars-cell[data-id="${eventId}"]`);
+    if (!cell) return;
+    cell.querySelectorAll('span').forEach((s, i) => {
+        s.style.color = i < n ? '#fbbf24' : 'rgba(255,255,255,0.15)';
+    });
+}
+
+/** Mouse-out: restore to saved rating */
+function crmStarOut(eventId, savedFit) {
+    const cell = document.querySelector(`.crm-stars-cell[data-id="${eventId}"]`);
+    if (!cell) return;
+    cell.querySelectorAll('span').forEach((s, i) => {
+        s.style.color = i < savedFit ? '#f59e0b' : 'rgba(255,255,255,0.15)';
+    });
+}
+
+/** Click: persist the new fit rating to the DB */
+async function crmSetFit(evt, eventId, n) {
+    evt.stopPropagation();
+    const api = _crmApi();
+    // Optimistic update: refresh visual immediately
+    const cell = document.querySelector(`.crm-stars-cell[data-id="${eventId}"]`);
+    if (cell) {
+        cell.dataset.fit = n;
+        cell.querySelectorAll('span').forEach((s, i) => {
+            s.style.color = i < n ? '#f59e0b' : 'rgba(255,255,255,0.15)';
+            // Update onmouseout closures by replacing the data-fit attr
+            s.setAttribute('onmouseout', `crmStarOut(${eventId}, ${n})`);
+        });
+        // Also update in local data so re-renders don't revert
+        const ev = crmAllEvents.find(e => e.id === eventId);
+        if (ev) ev.fit_cirkanime = n;
+    }
+    if (!api) return; // dev mode: visual-only
+    try {
+        await api.update_event_meta(eventId, n, null);
+    } catch(e) {
+        console.warn('[CRM] crmSetFit error:', e);
+    }
+}
+
+// ─── Status picker popover ─────────────────────────────────────────────────
+
+let _pickerOpen = false;
+
+/** Open a small floating picker next to the dot */
+function crmOpenStatusPicker(evt, eventId) {
+    evt.stopPropagation();
+
+    // Close any existing picker
+    document.getElementById('crm-status-picker')?.remove();
+
+    const picker = document.createElement('div');
+    picker.id = 'crm-status-picker';
+    picker.style.cssText = [
+        'position:fixed',
+        'z-index:9999',
+        'background:#1e1e2e',
+        'border:1px solid rgba(255,255,255,0.12)',
+        'border-radius:8px',
+        'padding:6px 4px',
+        'box-shadow:0 8px 24px rgba(0,0,0,0.5)',
+        'min-width:170px',
+        'display:flex',
+        'flex-direction:column',
+        'gap:2px',
+    ].join(';');
+
+    // Position near the click
+    const rect = evt.target.getBoundingClientRect();
+    let left = rect.right + 6;
+    let top  = rect.top - 4;
+    // Keep inside viewport
+    if (left + 180 > window.innerWidth)  left = rect.left - 180;
+    if (top  + 220 > window.innerHeight) top  = window.innerHeight - 230;
+    picker.style.left = left + 'px';
+    picker.style.top  = top  + 'px';
+
+    // Blank / clear option
+    const clearBtn = document.createElement('button');
+    clearBtn.textContent = '\u2014 Aucun statut';
+    clearBtn.style.cssText = 'width:100%;text-align:left;padding:5px 10px;background:transparent;border:none;color:rgba(255,255,255,0.35);font-size:0.75rem;cursor:pointer;border-radius:4px;';
+    clearBtn.onmouseenter = () => { clearBtn.style.background = 'rgba(255,255,255,0.06)'; };
+    clearBtn.onmouseleave = () => { clearBtn.style.background = 'transparent'; };
+    clearBtn.onclick = (e) => { e.stopPropagation(); crmSetStatus(eventId, ''); picker.remove(); };
+    picker.appendChild(clearBtn);
+
+    CRM_STATUSES.forEach(s => {
+        const btn = document.createElement('button');
+        btn.style.cssText = 'width:100%;text-align:left;padding:5px 10px;background:transparent;border:none;color:#fff;font-size:0.75rem;cursor:pointer;border-radius:4px;display:flex;align-items:center;gap:7px;';
+        btn.innerHTML = `<span style="color:${s.color};font-size:0.9rem;">${s.dot}</span>${s.label}`;
+        btn.onmouseenter = () => { btn.style.background = 'rgba(255,255,255,0.07)'; };
+        btn.onmouseleave = () => { btn.style.background = 'transparent'; };
+        btn.onclick = (e) => { e.stopPropagation(); crmSetStatus(eventId, s.label); picker.remove(); };
+        picker.appendChild(btn);
+    });
+
+    document.body.appendChild(picker);
+
+    // Close on outside click
+    setTimeout(() => {
+        document.addEventListener('click', function _close() {
+            picker.remove();
+            document.removeEventListener('click', _close);
+        }, { once: true });
+    }, 0);
+}
+
+/** Persist new status and update the dot in-place without full re-render */
+async function crmSetStatus(eventId, statusLabel) {
+    // Update local data
+    const ev = crmAllEvents.find(e => e.id === eventId);
+    if (ev) ev.contact_status = statusLabel;
+
+    // Update dot in DOM
+    const dotEl = document.querySelector(`.crm-status-dot[data-id="${eventId}"]`);
+    if (dotEl) {
+        const sc = _statusConfig(statusLabel);
+        dotEl.style.color  = sc ? sc.color : 'rgba(255,255,255,0.2)';
+        dotEl.textContent  = sc ? sc.dot   : '\u25cf';
+        dotEl.title        = statusLabel || 'Aucun statut';
+        dotEl.dataset.status = statusLabel;
+    }
+
+    const api = _crmApi();
+    if (!api) return;
+    try {
+        await api.update_event_meta(eventId, null, statusLabel);
+    } catch(e) {
+        console.warn('[CRM] crmSetStatus error:', e);
+    }
 }
 
 function crmShowAddEvent() {

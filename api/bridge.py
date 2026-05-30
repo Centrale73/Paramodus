@@ -532,6 +532,19 @@ class ApiBridge:
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    def update_event_meta(self, event_id: int, fit_cirkanime=None, contact_status=None):
+        """Update fit rating (0-5) and/or contact status on an event."""
+        try:
+            from crm.db import update_event_meta
+            ok = update_event_meta(
+                event_id=int(event_id),
+                fit_cirkanime=int(fit_cirkanime) if fit_cirkanime is not None else None,
+                contact_status=str(contact_status) if contact_status is not None else None,
+            )
+            return {"status": "success" if ok else "not_found"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     def delete_crm_event(self, event_id: int):
         """Delete a CRM event row by id."""
         try:
