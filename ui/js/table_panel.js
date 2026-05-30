@@ -120,7 +120,11 @@ function _parseCSV(text) {
   // Strip UTF-8 BOM
   if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1);
 
+  // Strip residual null bytes (present after UTF-16 LE decode)
+  text = text.replace(/\x00/g, '');
+
   var lines    = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+  // Filter blank lines AND lines that were only null bytes (reduced to empty after strip)
   var nonEmpty = lines.filter(function(l) { return l.trim() !== ''; });
   if (nonEmpty.length === 0) return null;
 
@@ -208,11 +212,23 @@ function tableHandleCSVFile(file) {
     r.readAsText(file, encoding);
   }
 
-  // First pass: UTF-8
+  // Encoding detection chain:
+  //   1. Read as UTF-8
+  //   2. If >10% null bytes  → UTF-16 LE (no BOM)
+  //   3. Else if U+FFFD found → ISO-8859-1 / Latin-1
+  //   4. Otherwise           → UTF-8 is fine
   readWith('UTF-8', function(utf8Text) {
-    // U+FFFD (replacement char) means the file isn't valid UTF-8
-    if (utf8Text.indexOf('\uFFFD') !== -1) {
-      // Retry with Latin-1
+    var nullCount = (utf8Text.match(/\x00/g) || []).length;
+    if (nullCount > utf8Text.length * 0.1) {
+      // UTF-16 LE: re-read with correct encoding
+      readWith('UTF-16LE', function(utf16Text) {
+        var parsed = tryParse(utf16Text);
+        if (!parsed) { _tableSetDZLabel('Could not parse CSV \u2014 check the file format.'); return; }
+        _pendingCSV = parsed;
+        _showCSVPreview(file.name, parsed, 'UTF-16 LE');
+      });
+    } else if (utf8Text.indexOf('\uFFFD') !== -1) {
+      // Legacy code-page encoding: retry as Latin-1
       readWith('ISO-8859-1', function(latin1Text) {
         var parsed = tryParse(latin1Text);
         if (!parsed) { _tableSetDZLabel('Could not parse CSV \u2014 check the file format.'); return; }
