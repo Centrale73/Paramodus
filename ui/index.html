@@ -6,6 +6,75 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>BonsaiChat</title>
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* ── Calendar inline event-form ─────────────────────────────── */
+        #cal-event-form {
+            display: none;
+            margin-top: 14px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 12px;
+            animation: calFormIn 0.18s ease-out;
+        }
+        @keyframes calFormIn {
+            from { opacity: 0; transform: translateY(-6px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .cal-form-label {
+            display: block;
+            font-size: 0.68rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 3px;
+        }
+        .cal-form-input {
+            width: 100%;
+            padding: 7px 9px;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.25);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text-primary);
+            font-size: 0.82rem;
+            outline: none;
+            transition: border-color 0.15s;
+            /* Make the browser's native date/time picker match the dark theme */
+            color-scheme: dark;
+        }
+        .cal-form-input:focus {
+            border-color: var(--accent);
+        }
+        .cal-form-row {
+            display: flex;
+            gap: 8px;
+        }
+        .cal-form-row > div {
+            flex: 1;
+        }
+        .cal-form-field {
+            margin-bottom: 9px;
+        }
+        #cal-form-error {
+            display: none;
+            font-size: 0.75rem;
+            margin-top: 4px;
+            padding: 4px 6px;
+            border-radius: 4px;
+            background: rgba(0,0,0,0.2);
+        }
+        .cal-start-badge {
+            display: inline-block;
+            font-size: 0.72rem;
+            padding: 2px 7px;
+            border-radius: 20px;
+            background: rgba(108,92,231,0.25);
+            color: var(--accent);
+            border: 1px solid rgba(108,92,231,0.35);
+            margin-bottom: 10px;
+        }
+    </style>
 </head>
 
 <body>
@@ -227,10 +296,77 @@ limitations under the License.</div>
             <!-- Calendar grid -->
             <div id="cal-grid" style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px;"></div>
 
-            <!-- Events for selected day -->
+            <!-- Events for selected day (CRM active events summary) -->
             <div id="cal-day-events" style="margin-top:14px; font-size:0.8rem; color:var(--text-muted); min-height:40px;">
-                Cliquez sur un jour pour voir les événements.
+                Cliquez sur un jour pour créer un événement.
             </div>
+
+            <!-- ── Inline Event-Creation Form ──────────────────────────────── -->
+            <!-- Appears below the calendar grid when a day is clicked.        -->
+            <!-- No modal — all fields render inline in the sidebar.           -->
+            <div id="cal-event-form">
+
+                <!-- Selected start-date badge -->
+                <div style="margin-bottom:8px;">
+                    <span class="cal-start-badge" id="cal-form-start-label">—</span>
+                </div>
+
+                <!-- Hidden: carries the ISO start date (YYYY-MM-DD) set by calSelectDay() -->
+                <input type="hidden" id="cal-form-start-date">
+
+                <!-- Event title -->
+                <div class="cal-form-field">
+                    <label class="cal-form-label" for="cal-form-title">Titre de l'événement</label>
+                    <input id="cal-form-title" type="text" class="cal-form-input"
+                           placeholder="Ex: Réunion Cirkanime" autocomplete="off">
+                </div>
+
+                <!-- Start time (on the selected day) -->
+                <div class="cal-form-field">
+                    <label class="cal-form-label" for="cal-form-start-time">Heure de début</label>
+                    <input id="cal-form-start-time" type="time" class="cal-form-input" value="09:00">
+                </div>
+
+                <!-- End date + end time (may differ from start date) -->
+                <div class="cal-form-row">
+                    <div class="cal-form-field">
+                        <label class="cal-form-label" for="cal-form-end-date">Date de fin</label>
+                        <input id="cal-form-end-date" type="date" class="cal-form-input">
+                    </div>
+                    <div class="cal-form-field">
+                        <label class="cal-form-label" for="cal-form-end-time">Heure de fin</label>
+                        <input id="cal-form-end-time" type="time" class="cal-form-input" value="10:00">
+                    </div>
+                </div>
+
+                <!-- Optional notes -->
+                <div class="cal-form-field">
+                    <label class="cal-form-label" for="cal-form-notes">Notes (optionnel)</label>
+                    <textarea id="cal-form-notes" class="cal-form-input" rows="2"
+                              style="resize:none;" placeholder="Détails supplémentaires…"></textarea>
+                </div>
+
+                <!-- Inline error / success feedback -->
+                <div id="cal-form-error"></div>
+
+                <!-- Action buttons -->
+                <div style="display:flex; gap:8px; margin-top:4px;">
+                    <button id="cal-form-save-btn" onclick="calSaveEvent()"
+                        style="flex:1; padding:8px; border-radius:6px; border:none;
+                               background:var(--accent); color:#fff; cursor:pointer;
+                               font-size:0.82rem; font-weight:600;
+                               transition:opacity 0.15s;">
+                        Enregistrer
+                    </button>
+                    <button onclick="calCancelEvent()"
+                        style="flex:1; padding:8px; border-radius:6px;
+                               border:1px solid rgba(255,255,255,0.1); background:transparent;
+                               color:var(--text-muted); cursor:pointer; font-size:0.82rem;">
+                        Annuler
+                    </button>
+                </div>
+
+            </div><!-- /#cal-event-form -->
         </div>
     </div>
 
