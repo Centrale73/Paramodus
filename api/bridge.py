@@ -422,6 +422,15 @@ class ApiBridge:
     # CRM — exposed to JS via window.pywebview.api
     # ------------------------------------------------------------------
 
+    def get_followups_due(self):
+        """Return all contacts_log entries whose follow_up_date is today or overdue."""
+        try:
+            from crm.db import get_followups_due
+            followups = get_followups_due()
+            return {"followups": followups}
+        except Exception as e:
+            return {"followups": [], "error": str(e)}
+
     def get_urgent_events(self):
         """Return all events with urgency tags for the current month."""
         try:

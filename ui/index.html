@@ -223,28 +223,32 @@ limitations under the License.</div>
 
             <!-- Filter bar -->
             <div style="display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap;">
-                <button class="crm-filter-btn active" onclick="crmSetFilter('all', this)">All</button>
-                <button class="crm-filter-btn" onclick="crmSetFilter('green', this)">🟢 Now</button>
-                <button class="crm-filter-btn" onclick="crmSetFilter('yellow', this)">🟡 Soon</button>
-                <button class="crm-filter-btn" onclick="crmSetFilter('red', this)">🔴 Passed</button>
+                <button class="crm-filter-btn active" onclick="crmSetFilter('all', this)">Tous</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('green', this)">🟢 Ce mois</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('yellow', this)">🟡 Bientôt</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('red', this)">🔴 Passés</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('followup', this)">🔔 Relances</button>
             </div>
 
             <!-- Events table -->
             <div id="crm-table-container" style="overflow-x:auto;">
                 <table id="crm-table" style="width:100%; border-collapse:collapse; font-size:0.78rem;">
                     <thead>
-                        <tr style="color:var(--text-muted); text-align:left; border-bottom:1px solid rgba(255,255,255,0.08);">
-                            <th style="padding:6px 4px; width:22px;" title="Urgence">&#9679;</th>
+                        <tr style="color:var(--text-muted); text-align:left; border-bottom:1px solid rgba(255,255,255,0.08); font-size:0.72rem;">
+                            <th style="padding:6px 4px; width:20px;" title="Urgence">&#9679;</th>
                             <th style="padding:6px 4px;">Ville</th>
-                            <th style="padding:6px 4px;">&#201;v&#233;nement</th>
+                            <th style="padding:6px 4px;">Événement</th>
+                            <th style="padding:6px 4px;">Type</th>
+                            <th style="padding:6px 4px;">Période</th>
                             <th style="padding:6px 4px;">Contacter</th>
-                            <th style="padding:6px 4px; width:24px; text-align:center;" title="Statut de contact">&#9679;</th>
-                            <th style="padding:6px 4px;" title="Fit CIRKANIME (1-5 étoiles)">Fit</th>
-                            <th style="padding:6px 4px; width:80px;">Actions</th>
+                            <th style="padding:6px 4px; width:24px; text-align:center;" title="Statut">&#9679;</th>
+                            <th style="padding:6px 4px;" title="Fit CIRKANIME">Fit</th>
+                            <th style="padding:6px 4px;">Notes</th>
+                            <th style="padding:6px 4px; width:72px;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="crm-table-body">
-                        <tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-muted);">Loading…</td></tr>
+                        <tr><td colspan="10" style="padding:20px; text-align:center; color:var(--text-muted);">Loading…</td></tr>
                     </tbody>
                 </table>
             </div>

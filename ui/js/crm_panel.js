@@ -1,6 +1,7 @@
 // ─── CRM Panel ────────────────────────────────────────────────────────────────
 
-let crmAllEvents = [];
+let crmAllEvents    = [];
+let crmFollowups    = [];   // overdue follow-ups from contacts_log
 let crmCurrentFilter = 'all';
 
 // Helper: the pywebview bridge (window.pywebview.api). Returns null before ready.
@@ -26,26 +27,29 @@ function _statusConfig(label) {
 
 async function crmRefresh() {
     const tbody = document.getElementById('crm-table-body');
-    tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-muted);">Loading…</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="10" style="padding:20px; text-align:center; color:var(--text-muted);">Loading…</td></tr>';
     const api = _crmApi();
     if (!api) {
-        tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-muted);">En attente du backend…</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" style="padding:20px; text-align:center; color:var(--text-muted);">En attente du backend…</td></tr>';
         return;
     }
     try {
-        const data = await api.get_urgent_events();
+        const [data, fuData] = await Promise.all([
+            api.get_urgent_events(),
+            api.get_followups_due ? api.get_followups_due() : Promise.resolve({ followups: [] }),
+        ]);
         if (data && data.error) {
-            tbody.innerHTML = `<tr><td colspan="7" style="padding:20px; text-align:center; color:#ef4444;">Erreur CRM : ${data.error}</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="10" style="padding:20px; text-align:center; color:#ef4444;">Erreur CRM : ${data.error}</td></tr>`;
             crmAllEvents = [];
             return;
         }
-        crmAllEvents = (data && data.events) || [];
+        crmAllEvents = (data && data.events)     || [];
+        crmFollowups = (fuData && fuData.followups) || [];
         crmRender();
     } catch (e) {
-        tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:#ef4444;">Failed to load CRM data.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="10" style="padding:20px; text-align:center; color:#ef4444;">Failed to load CRM data.</td></tr>';
     }
 }
-
 function crmSetFilter(filter, btn) {
     crmCurrentFilter = filter;
     document.querySelectorAll('.crm-filter-btn').forEach(b => b.classList.remove('active'));
@@ -55,20 +59,40 @@ function crmSetFilter(filter, btn) {
 
 function crmRender() {
     const tbody = document.getElementById('crm-table-body');
-    const urgencyDot = { green: '🟢', yellow: '🟡', red: '🔴', grey: '⚪' };
+    const urgencyDot = { green: '🟢', yellow: '🟡', red: '🔴', grey: '⚪', followup: '🔔' };
 
-    let filtered = crmAllEvents;
-    if (crmCurrentFilter !== 'all') {
+    // ── Build filtered list ───────────────────────────────────────────────
+    let filtered;
+    if (crmCurrentFilter === 'followup') {
+        filtered = crmFollowups.map(f => ({
+            id:             f.id,
+            city:           f.city          || '—',
+            event_name:     f.org_name       || ('Org #' + f.org_id),
+            event_type:     f.org_type       || '',
+            period:         '',
+            best_contact:   f.follow_up_date || '',
+            contact_status: f.status         || '',
+            fit_cirkanime:  0,
+            notes:          f.summary        || '',
+            urgency:        'followup',
+            org_id:         f.org_id,
+        }));
+    } else if (crmCurrentFilter !== 'all') {
         filtered = crmAllEvents.filter(e => e.urgency === crmCurrentFilter);
+    } else {
+        filtered = crmAllEvents;
     }
 
     if (filtered.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="7" style="padding:20px; text-align:center; color:var(--text-muted);">Aucun événement.</td></tr>';
+        const empty = crmCurrentFilter === 'followup'
+            ? 'Aucune relance en retard. 🎉'
+            : 'Aucun événement.';
+        tbody.innerHTML = `<tr><td colspan="10" style="padding:20px; text-align:center; color:var(--text-muted);">${empty}</td></tr>`;
         return;
     }
 
     tbody.innerHTML = filtered.map(e => {
-        // ── Status dot ────────────────────────────────────────────────────────
+        // ── Status dot ───────────────────────────────────────────────────────────────────────
         const sc  = _statusConfig(e.contact_status);
         const dotColor = sc ? sc.color : 'rgba(255,255,255,0.2)';
         const dotChar  = sc ? sc.dot  : '●';
@@ -82,7 +106,7 @@ function crmRender() {
                 onmouseover="this.style.transform='scale(1.3)'"
                 onmouseout="this.style.transform='scale(1)'">${dotChar}</span>`;
 
-        // ── Fit CIRKANIME stars ────────────────────────────────────────────
+        // ── Fit CIRKANIME stars ─────────────────────────────────────────────────────────
         const fit   = Math.max(0, Math.min(5, parseInt(e.fit_cirkanime) || 0));
         const stars = Array.from({length: 5}, (_, i) => `
           <span onclick="crmSetFit(event, ${e.id}, ${i+1})"
@@ -93,28 +117,38 @@ function crmRender() {
                 onmouseout="crmStarOut(${e.id}, ${parseInt(e.fit_cirkanime)||0})">★</span>`
         ).join('');
 
+        // ── Notes cell (truncated, full text on hover) ──────────────────────────────────
+        const notesText = (e.notes || '').replace(/</g, '&lt;');
+        const notesCell = notesText
+            ? `<td style="padding:6px 4px; font-size:0.7rem; color:var(--text-muted);
+                          max-width:100px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;"
+                   title="${notesText}">${notesText}</td>`
+            : `<td style="padding:6px 4px; color:rgba(255,255,255,0.15); font-size:0.7rem;">—</td>`;
+
         return `
         <tr class="crm-row crm-row-${e.urgency}" data-id="${e.id}">
             <td style="padding:6px 4px; text-align:center;">${urgencyDot[e.urgency] || '⚪'}</td>
-            <td style="padding:6px 4px; font-weight:500;">${e.city || '—'}</td>
-            <td style="padding:6px 4px; max-width:130px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${e.event_name}">${e.event_name}</td>
-            <td style="padding:6px 4px; font-size:0.72rem; color:var(--text-muted);">${e.best_contact || '—'}</td>
+            <td style="padding:6px 4px; font-weight:500; white-space:nowrap;">${e.city || '—'}</td>
+            <td style="padding:6px 4px; max-width:110px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${e.event_name}">${e.event_name}</td>
+            <td style="padding:6px 4px; font-size:0.7rem; color:var(--text-muted); white-space:nowrap;">${e.event_type || '—'}</td>
+            <td style="padding:6px 4px; font-size:0.7rem; color:var(--text-muted); white-space:nowrap;">${e.period || '—'}</td>
+            <td style="padding:6px 4px; font-size:0.72rem; color:var(--text-muted); white-space:nowrap;">${e.best_contact || '—'}</td>
             <td style="padding:6px 4px; text-align:center;" class="crm-status-cell" data-id="${e.id}">${statusDot}</td>
             <td style="padding:6px 4px; white-space:nowrap;" class="crm-stars-cell" data-id="${e.id}" data-fit="${fit}">${stars}</td>
+            ${notesCell}
             <td style="padding:6px 4px; white-space:nowrap;">
-                <button onclick="crmLogContact(${e.org_id}, '${(e.event_name || '').replace(/'/g, "\\'")}')"
-                    style="font-size:0.7rem; padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:var(--text-muted); cursor:pointer;" title="Journaliser un contact">✉</button>
-                <button onclick="crmShowEmails(${e.org_id}, '${(e.event_name || '').replace(/'/g, "\\'")}')"
-                    style="font-size:0.7rem; padding:2px 6px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:var(--text-muted); cursor:pointer;" title="Voir les courriels récents (Gmail)">📧</button>
+                <button onclick="crmLogContact(${e.org_id}, '${(e.event_name || '').replace(/'/g, "\'")}')"
+                    style="font-size:0.7rem; padding:2px 5px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:var(--text-muted); cursor:pointer;" title="Journaliser un contact">✉</button>
+                <button onclick="crmShowEmails(${e.org_id}, '${(e.event_name || '').replace(/'/g, "\'")}')"
+                    style="font-size:0.7rem; padding:2px 5px; border-radius:4px; border:1px solid rgba(255,255,255,0.12); background:transparent; color:var(--text-muted); cursor:pointer;" title="Voir les courriels">📧</button>
                 <button onclick="crmDeleteEvent(event, ${e.id})"
-                    style="font-size:0.7rem; padding:2px 6px; border-radius:4px;
+                    style="font-size:0.7rem; padding:2px 5px; border-radius:4px;
                            border:1px solid rgba(239,68,68,0.3); background:transparent;
                            color:#ef4444; cursor:pointer; margin-left:2px;" title="Supprimer">🗑</button>
             </td>
         </tr>`;
     }).join('');
 }
-
 async function crmLogContact(orgId, eventName) {
     if (!orgId) { alert('Aucun organisme lié à cet événement.'); return; }
     const api = _crmApi();
