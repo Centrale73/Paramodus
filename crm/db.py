@@ -416,3 +416,14 @@ def pipeline_summary() -> Dict[str, Any]:
             "total_orgs_contacted": total_row["total_orgs"],
             "total_pipeline_value_cad": total_row["total_pipeline_value"],
         }
+
+
+# ---------------------------------------------------------------------------
+# Delete operations
+# ---------------------------------------------------------------------------
+
+def delete_event(event_id: int) -> bool:
+    """Delete a CRM/calendar event by id. Returns True if a row was deleted."""
+    with _conn() as conn:
+        cur = conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        return cur.rowcount > 0

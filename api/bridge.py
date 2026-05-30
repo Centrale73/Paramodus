@@ -1,8 +1,8 @@
 """
-app.py — BonsaiChat pywebview API bridge.
+api/bridge.py — Paramodus pywebview API bridge.
 
 Exposes all methods the HTML/JS frontend calls via window.pywebview.api.
-Adapted from Paramodus' bridge but targeting BonsaiChat's simpler, local-only
+Paramodus pywebview API bridge — local-only
 backend (llama-server + Agno + LanceDB RAG — no cloud provider switching).
 """
 
@@ -341,7 +341,9 @@ class ApiBridge:
     # ------------------------------------------------------------------
 
     def set_language(self, language: str):
+        """Persist language selection — updates env var so agent picks it up."""
         self.current_language = language
+        os.environ["PARAMODUS_LANGUAGE"] = language
         return {"status": "success"}
 
     # ------------------------------------------------------------------
@@ -527,6 +529,59 @@ class ApiBridge:
                 })
 
             return {"status": "success", "emails": emails, "email": email}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def delete_crm_event(self, event_id: int):
+        """Delete a CRM event row by id."""
+        try:
+            from crm.db import delete_event
+            deleted = delete_event(int(event_id))
+            if deleted:
+                return {"status": "success"}
+            return {"status": "error", "message": "Event not found."}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def delete_calendar_event(self, event_id: int):
+        """Delete a calendar event row by id (alias for CRM events table)."""
+        return self.delete_crm_event(event_id)
+
+    def table_delegate_query(self, markdown_table: str):
+        """Parse a markdown table from the Table panel and forward to the agent."""
+        try:
+            prompt = (
+                "The user has submitted a structured data table for analysis. "
+                "Parse it and respond with insights, summaries, or actions as appropriate.\n\n"
+                f"{markdown_table}"
+            )
+            # Reuse the existing stream pathway synchronously via a simple queue
+            result_chunks = []
+            done_event = threading.Event()
+
+            def _collect(chunk, *args):
+                result_chunks.append(chunk)
+
+            # Run a non-streaming call via the agent directly
+            import asyncio as _asyncio
+            mod = _agent_module()
+            agent = mod.get_or_create_agent(
+                session_id="table-delegate",
+                space_instructions=None,
+                language=getattr(self, "current_language", "en"),
+            )
+            loop = _asyncio.new_event_loop()
+            resp = loop.run_until_complete(
+                agent.arun(prompt, stream=False)
+            )
+            loop.close()
+            reply = resp.content if hasattr(resp, "content") else str(resp)
+            # Push reply to the chat UI as a bot message
+            if self._window:
+                self._window.evaluate_js(
+                    f"appendMessage('bot', {repr(reply)})"
+                )
+            return {"status": "success"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
@@ -762,7 +817,7 @@ class ApiBridge:
     # Stub out download methods (model is shipped or user places it manually)
     def download_bonsai(self, model_key: str = "bonsai-8b") -> dict:
         return {"status": "not_applicable",
-                "message": "BonsaiChat does not auto-download. Place the .gguf in models/."}
+                "message": "Paramodus does not auto-download. Place the .gguf in models/."}
 
     def cancel_download_bonsai(self, model_key: str = "bonsai-8b") -> dict:
         return {"status": "not_applicable"}

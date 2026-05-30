@@ -1,5 +1,5 @@
 """
-app.py — BonsaiChat entry point.
+app.py — Paramodus entry point.
 
 Startup sequence
 ----------------
@@ -44,7 +44,7 @@ def _background_init():
 
 
 def _on_exit():
-    """Ensure the llama-server is terminated when BonsaiChat closes."""
+    """Ensure the llama-server is terminated when Paramodus closes."""
     try:
         from api.bridge import ApiBridge
         # bridge singleton is accessed via the window; just attempt cleanup
@@ -74,7 +74,7 @@ if __name__ == '__main__':
 
 
     window = webview.create_window(
-        "BonsaiChat",
+        "Paramodus",
         html_path,
         js_api=api,
         width=1100,
