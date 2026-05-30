@@ -547,6 +547,28 @@ class ApiBridge:
         """Delete a calendar event row by id (alias for CRM events table)."""
         return self.delete_crm_event(event_id)
 
+    def parse_csv_preview(self, base64_csv: str) -> dict:
+        """Decode a base64-encoded CSV and return parsed columns + row count for the preview banner.
+        Pure Python path — no agent call, just metadata so the JS can show the confirm prompt."""
+        try:
+            import base64 as _b64
+            import csv, io
+            raw  = _b64.b64decode(base64_csv).decode("utf-8", errors="replace")
+            reader = csv.reader(io.StringIO(raw))
+            rows   = list(reader)
+            if not rows:
+                return {"status": "error", "message": "Empty file."}
+            headers  = rows[0]
+            data     = rows[1:]
+            return {
+                "status":  "success",
+                "columns": headers,
+                "rows":    data,
+                "row_count": len(data),
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     def table_delegate_query(self, markdown_table: str):
         """Parse a markdown table from the Table panel and forward to the agent."""
         try:

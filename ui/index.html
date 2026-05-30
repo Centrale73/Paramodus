@@ -280,25 +280,81 @@ limitations under the License.</div>
 
         <!-- View: Table -->
         <div id="view-table" class="sidebar-view" style="display:none;">
-            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+
+            <!-- ── CSV Import drop zone ─────────────────────────────────── -->
+            <div id="table-csv-dropzone"
+                 onclick="document.getElementById('table-csv-input').click()"
+                 ondragover="event.preventDefault();this.classList.add('table-dz-hover')"
+                 ondragleave="this.classList.remove('table-dz-hover')"
+                 ondrop="event.preventDefault();this.classList.remove('table-dz-hover');tableHandleCSVDrop(event)"
+                 style="display:flex;align-items:center;gap:8px;padding:8px 10px;
+                        border:1px dashed rgba(255,255,255,0.15);border-radius:8px;
+                        cursor:pointer;margin-bottom:10px;transition:border-color 0.15s,background 0.15s;">
+                <!-- mini CSV-doc icon -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                     style="flex-shrink:0;color:var(--accent);">
+                    <path d="M4 4a2 2 0 0 1 2-2h8l4 4v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4z"/>
+                    <polyline points="14 2 14 6 18 6" stroke-width="1.8"/>
+                    <line x1="7.5" y1="11" x2="16.5" y2="11"/>
+                    <line x1="7.5" y1="14" x2="16.5" y2="14"/>
+                </svg>
+                <span id="table-dz-label" style="font-size:0.75rem;color:var(--text-muted);pointer-events:none;">
+                    Drop a CSV here &nbsp;or&nbsp; click to import
+                </span>
+            </div>
+            <input type="file" id="table-csv-input" accept=".csv,text/csv" style="display:none"
+                   onchange="tableHandleCSVFile(this.files[0])">
+
+            <!-- ── CSV Preview / Confirm Banner ──────────────────────────── -->
+            <div id="table-csv-preview" style="display:none;margin-bottom:10px;padding:8px 10px;
+                 border-radius:8px;background:rgba(108,92,231,0.08);border:1px solid rgba(108,92,231,0.25);">
+                <div style="font-size:0.72rem;color:var(--accent);font-weight:600;margin-bottom:4px;">
+                    &#9432; CSV detected
+                </div>
+                <div id="table-csv-preview-info"
+                     style="font-size:0.7rem;color:var(--text-muted);margin-bottom:8px;line-height:1.5;"></div>
+                <div style="display:flex;gap:6px;">
+                    <button onclick="tableConfirmCSV()"
+                        style="flex:1;padding:5px 0;border-radius:6px;border:none;
+                               background:var(--accent);color:#fff;cursor:pointer;
+                               font-size:0.75rem;font-weight:600;">
+                        &#10003; Load into Table
+                    </button>
+                    <button onclick="tableDismissCSV()"
+                        style="flex:1;padding:5px 0;border-radius:6px;
+                               border:1px solid rgba(255,255,255,0.12);background:transparent;
+                               color:var(--text-muted);cursor:pointer;font-size:0.75rem;">
+                        Dismiss
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── Column headers editor ─────────────────────────────────── -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
                 <h4 style="margin:0;font-size:0.9rem;color:var(--text-muted);">Custom Table</h4>
                 <button onclick="tableAddColumn()"
                     style="background:transparent;border:1px solid rgba(255,255,255,0.12);color:var(--accent);
                            cursor:pointer;font-size:0.75rem;padding:2px 8px;border-radius:4px;">+ Col</button>
             </div>
             <div id="table-headers" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;"></div>
+
+            <!-- ── Table grid ─────────────────────────────────────────────── -->
             <div style="overflow-x:auto;">
                 <table id="custom-table" style="width:100%;border-collapse:collapse;font-size:0.78rem;"></table>
             </div>
+
+            <!-- ── Action bar ─────────────────────────────────────────────── -->
             <div style="display:flex;gap:6px;margin-top:8px;">
                 <button onclick="tableAddRow()"
                     style="flex:1;padding:5px 0;border-radius:6px;border:1px solid rgba(255,255,255,0.12);
                            background:transparent;color:var(--text-muted);cursor:pointer;font-size:0.78rem;">+ Row</button>
                 <button onclick="tableSendToAgent()"
                     style="flex:1;padding:5px 0;border-radius:6px;border:1px solid rgba(108,92,231,0.4);
-                           background:rgba(108,92,231,0.15);color:var(--accent);cursor:pointer;font-size:0.78rem;">▶ Send to Agent</button>
+                           background:rgba(108,92,231,0.15);color:var(--accent);cursor:pointer;font-size:0.78rem;">&#9658; Send to Agent</button>
             </div>
-            <div id="table-agent-feedback" style="display:none;margin-top:8px;font-size:0.75rem;padding:4px 6px;border-radius:4px;background:rgba(0,0,0,0.2);"></div>
+            <div id="table-agent-feedback" style="display:none;margin-top:8px;font-size:0.75rem;
+                 padding:4px 6px;border-radius:4px;background:rgba(0,0,0,0.2);"></div>
         </div>
 
         <!-- View: Calendar -->
@@ -430,12 +486,19 @@ limitations under the License.</div>
         </div>
         <!-- Table Toggle -->
         <div class="sidebar-toggle-tab" onclick="toggleSidebar('table')" id="tab-table" title="Table">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+            <!-- Spreadsheet-style icon: document with rows of data -->
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
                 stroke-linecap="round" stroke-linejoin="round">
-                <rect x="3" y="3" width="18" height="18" rx="2"/>
-                <line x1="3" y1="9" x2="21" y2="9"/>
-                <line x1="3" y1="15" x2="21" y2="15"/>
-                <line x1="9" y1="3" x2="9" y2="21"/>
+                <!-- Document body -->
+                <path d="M4 4a2 2 0 0 1 2-2h8l4 4v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4z"/>
+                <!-- Folded corner -->
+                <polyline points="14 2 14 6 18 6" stroke-width="1.8"/>
+                <!-- Data rows -->
+                <line x1="7.5" y1="11" x2="16.5" y2="11"/>
+                <line x1="7.5" y1="14" x2="16.5" y2="14"/>
+                <line x1="7.5" y1="17" x2="13" y2="17"/>
+                <!-- Left cell divider -->
+                <line x1="10" y1="9.5" x2="10" y2="18.5" stroke-width="1"/>
             </svg>
         </div>
     </div>
