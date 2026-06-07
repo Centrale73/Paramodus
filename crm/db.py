@@ -64,6 +64,8 @@ CREATE TABLE IF NOT EXISTS events (
     contact_month_end    INTEGER,       -- 1-12
     org_id               INTEGER REFERENCES organisations(id),
     notes                TEXT,
+    fit_cirkanime        INTEGER DEFAULT 0,   -- 0-5 stars: how well this event fits
+    contact_status       TEXT DEFAULT '',     -- Contacté | Intéressé | Rencontre prévue | À relancer | Refus | Bon potentiel futur
     created_at           TEXT DEFAULT (datetime('now'))
 );
 
@@ -80,10 +82,12 @@ CREATE TABLE IF NOT EXISTS contacts_log (
 );
 """
 
-# Migration: add contact_month_start/end to existing events tables
+# Migration: add columns to existing events tables (safe — ignored if already present)
 _MIGRATIONS = [
     "ALTER TABLE events ADD COLUMN contact_month_start INTEGER",
     "ALTER TABLE events ADD COLUMN contact_month_end INTEGER",
+    "ALTER TABLE events ADD COLUMN fit_cirkanime INTEGER DEFAULT 0",
+    "ALTER TABLE events ADD COLUMN contact_status TEXT DEFAULT ''",
 ]
 
 
@@ -416,3 +420,56 @@ def pipeline_summary() -> Dict[str, Any]:
             "total_orgs_contacted": total_row["total_orgs"],
             "total_pipeline_value_cad": total_row["total_pipeline_value"],
         }
+
+
+# ---------------------------------------------------------------------------
+# Delete operations
+# ---------------------------------------------------------------------------
+
+def delete_event(event_id: int) -> bool:
+    """Delete a CRM/calendar event by id. Returns True if a row was deleted."""
+    with _conn() as conn:
+        cur = conn.execute("DELETE FROM events WHERE id = ?", (event_id,))
+        return cur.rowcount > 0
+
+
+# ---------------------------------------------------------------------------
+# Inline event metadata updates (fit rating + contact status)
+# ---------------------------------------------------------------------------
+
+VALID_STATUSES = {
+    "Contacté", "Intéressé", "Rencontre prévue",
+    "À relancer", "Refus", "Bon potentiel futur", "",
+}
+
+
+def update_event_meta(
+    event_id: int,
+    fit_cirkanime: Optional[int] = None,
+    contact_status: Optional[str] = None,
+) -> bool:
+    """
+    Update the fit rating (0-5) and/or contact status on an event.
+    Returns True if the row was found and updated.
+    """
+    updates: dict = {}
+
+    if fit_cirkanime is not None:
+        updates["fit_cirkanime"] = max(0, min(5, int(fit_cirkanime)))
+
+    if contact_status is not None:
+        if contact_status not in VALID_STATUSES:
+            raise ValueError(f"Invalid status: {contact_status!r}")
+        updates["contact_status"] = contact_status
+
+    if not updates:
+        return False
+
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [event_id]
+
+    with _conn() as conn:
+        cur = conn.execute(
+            f"UPDATE events SET {set_clause} WHERE id = ?", values
+        )
+        return cur.rowcount > 0

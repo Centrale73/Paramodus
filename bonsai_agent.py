@@ -1,7 +1,7 @@
 """
-bonsai_agent.py — Agno agent and RAG knowledge base for BonsaiChat.
+bonsai_agent.py — Agno agent and RAG knowledge base for Paramodus.
 
-Extracted from the original BonsaiChat.py monolith so that api/bridge.py
+Extracted from the original Paramodus.py monolith so that api/bridge.py
 can import it lazily (after the llama-server is already running).
 """
 
@@ -38,7 +38,7 @@ _app_data = os.path.join(_base_dir, "memory_data")
 os.makedirs(_app_data, exist_ok=True)
 
 LANCE_URI = os.path.join(_app_data, "lancedb")
-DB_FILE   = os.path.join(_app_data, "bonsaichat_memory.db")
+DB_FILE   = os.path.join(_app_data, "paramodus_memory.db")
 
 # CHANGE: Slightly smaller chunks work better for 1-bit models — they produce
 # cleaner, more focused context windows. Overlap kept proportional.
@@ -53,7 +53,7 @@ DEFAULT_CHUNKER = RecursiveChunking(chunk_size=700, overlap=100)
 #   • Avoid redundant negations ("do NOT claim you cannot…") — state the
 #     positive action instead.
 BASE_INSTRUCTIONS = """\
-You are Paramodus AI , a concise and precise assistant.
+You are Paramodus, a concise and precise assistant powered by the Bonsai model.
 
 Rules (follow in order):
 1. DOCUMENTS — When the user mentions files, data, or "provided documents", \
@@ -219,12 +219,20 @@ def reset_agent() -> None:
         _agent = None
 
 
+def get_or_create_agent(session_id: str, space_instructions=None, language: str = "en") -> Agent:
+    """Convenience wrapper used by the table delegate and bridge helpers."""
+    return get_agent(session_id=session_id, language=language)
+
+
 def get_run_kwargs(session_id: str, language: str = "en", space_instructions: str = "") -> dict:
     """Return the dynamic kwargs needed by agent.arun for a given session and language."""
     kwargs: dict = {"session_id": session_id}
+
+    # Prefer explicitly passed language; fall back to persisted env var.
+    effective_lang = language or os.environ.get("PARAMODUS_LANGUAGE", "en")
     
     additional = []
-    instruction = _LANGUAGE_INSTRUCTIONS.get(language)
+    instruction = _LANGUAGE_INSTRUCTIONS.get(effective_lang)
     if instruction:
         additional.append(instruction)
     if space_instructions:

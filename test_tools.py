@@ -18,7 +18,8 @@ def start_server() -> subprocess.Popen:
     proc = subprocess.Popen(
         [LLAMA_BIN, "-m", MODEL_PATH,
          "--host", HOST, "--port", str(PORT),
-         "-ngl", "99",
+         # CPU by default; set BONSAI_NGL to offload to a real discrete GPU.
+         "-ngl", os.environ.get("BONSAI_NGL", "0"),
          "--log-disable"],          # suppress llama.cpp wall-of-text
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

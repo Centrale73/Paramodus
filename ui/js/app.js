@@ -3,6 +3,67 @@
    Main Application Logic with GenUI Features
    ============================================ */
 
+// ── i18n ──────────────────────────────────────────────────────────────────────
+const I18N = {
+  en: {
+    chats:'Chats', settings:'Settings', crm:'CRM', calendar:'Calendar', table:'Table',
+    newChat:'New Chat', noChats:'No previous chats',
+    inputPlaceholder:'Ask me anything…',
+    dragDrop:'Drag PDF/CSV here\nor Click to upload',
+    ingesting:'Ingesting…', filesReady:'Files ready!',
+    modelReady:'Model is ready',
+    modelLoading:'Loading model… (may take 2–5 min first time)',
+    switchingModel:'Switching model…', contextCleared:'Context Cleared',
+    spaces:'Spaces', general:'General',
+    confirmDelete:'Delete', cancelDelete:'Cancel',
+  },
+  fr: {
+    chats:'Chats', settings:'Paramètres', crm:'CRM', calendar:'Calendrier', table:'Tableau',
+    newChat:'Nouvelle conversation', noChats:'Aucune conversation précédente',
+    inputPlaceholder:'Posez votre question…',
+    dragDrop:'Glisser PDF/CSV ici\nou cliquer pour téléverser',
+    ingesting:'Traitement…', filesReady:'Fichiers prêts !',
+    modelReady:'Modèle prêt',
+    modelLoading:'Chargement du modèle… (peut prendre 2–5 min)',
+    switchingModel:'Changement de modèle…', contextCleared:'Contexte effacé',
+    spaces:'Espaces', general:'Général',
+    confirmDelete:'Supprimer', cancelDelete:'Annuler',
+  },
+  es: {
+    chats:'Chats', settings:'Ajustes', crm:'CRM', calendar:'Calendario', table:'Tabla',
+    newChat:'Nuevo chat', noChats:'Sin conversaciones anteriores',
+    inputPlaceholder:'Pregúntame algo…',
+    dragDrop:'Arrastrar PDF/CSV aquí\no hacer clic para subir',
+    ingesting:'Procesando…', filesReady:'¡Archivos listos!',
+    modelReady:'Modelo listo',
+    modelLoading:'Cargando modelo… (puede tardar 2–5 min)',
+    switchingModel:'Cambiando modelo…', contextCleared:'Contexto borrado',
+    spaces:'Espacios', general:'General',
+    confirmDelete:'Eliminar', cancelDelete:'Cancelar',
+  },
+};
+let _currentLang = 'en';
+
+function applyLocale(lang) {
+  _currentLang = lang;
+  const t = I18N[lang] || I18N.en;
+  SIDEBAR_TITLES.chats    = t.chats;
+  SIDEBAR_TITLES.settings = t.settings;
+  SIDEBAR_TITLES.crm      = t.crm;
+  SIDEBAR_TITLES.calendar = t.calendar;
+  SIDEBAR_TITLES.table    = t.table;
+  const titleEl = document.getElementById('sidebar-title');
+  if (titleEl) titleEl.textContent = t[currentSidebarView] || t.chats;
+  const inp = document.getElementById('user-input');
+  if (inp) inp.placeholder = t.inputPlaceholder;
+  const dz = document.getElementById('drop-zone');
+  if (dz && dz.innerText !== t.ingesting) dz.innerText = t.dragDrop;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    if (t[key]) el.textContent = t[key];
+  });
+}
+
 // ========================================
 // STATE
 // ========================================
@@ -27,6 +88,7 @@ window.addEventListener('pywebviewready', async () => {
     animateHeader();
     loadSpaces(); // This will call loadSessionList() after rendering spaces
     loadCrmSettings();
+    loadModelVariants(); // populate the 8B/4B/1.7B model-size selector
 
     // Auto-start Bonsai setup on every launch — no user action needed.
     // triggerBonsaiAutoSetup() is a no-op if the server is already running.
@@ -280,12 +342,13 @@ let currentSidebarView = 'chats';
 // All sidebar views and their toggle tabs share the same id convention:
 //   panel:  #view-<name>     tab: #tab-<name>
 // Adding a new view = add it here + matching markup in index.html.
-const SIDEBAR_VIEWS = ['chats', 'settings', 'crm', 'calendar'];
+const SIDEBAR_VIEWS = ['chats', 'settings', 'crm', 'calendar', 'table'];
 const SIDEBAR_TITLES = {
     chats: 'Chats',
     settings: 'Settings',
     crm: 'CRM',
-    calendar: 'Calendrier',
+    calendar: 'Calendar',
+    table: 'Table',
 };
 
 function _setActiveSidebarTabs(view) {
@@ -336,6 +399,8 @@ function toggleSidebar(view = null) {
             Promise.resolve(crmRefresh()).then(() => {
                 if (typeof calRender === 'function') calRender();
             });
+        } else if (view === 'table') {
+            if (typeof tableRender === 'function') tableRender();
         }
     } else {
         // Clicking the same tab again closes it.
@@ -398,9 +463,74 @@ async function selectLanguage(value, label) {
     // Close dropdown
     dropdown.classList.remove('open');
 
-    // Trigger API call
-    console.log("Setting language to:", value);
+    applyLocale(value);                           // ← instant UI update
     await window.pywebview.api.set_language(value);
+}
+
+// ========================================
+// MODEL VARIANT SELECTOR (8B / 4B / 1.7B fast mode)
+// ========================================
+
+function toggleModelVariantDropdown() {
+    const dropdown = document.getElementById('model-variant-dropdown');
+    if (dropdown) dropdown.classList.toggle('open');
+}
+
+// Populate the dropdown from the backend's variant list and mark the active one.
+async function loadModelVariants() {
+    try {
+        const models = await window.pywebview.api.get_bonsai_models();
+        const optsEl = document.getElementById('model-variant-options');
+        const textEl = document.getElementById('model-variant-text');
+        const selEl  = document.querySelector('#model-variant-dropdown .dropdown-selected');
+        if (!optsEl || !Array.isArray(models)) return;
+
+        optsEl.innerHTML = '';
+        models.forEach(m => {
+            const div = document.createElement('div');
+            div.className = 'dropdown-option' + (m.active ? ' selected' : '');
+            div.setAttribute('data-value', m.key);
+            div.textContent = m.name;
+            div.title = m.description || '';
+            div.onclick = () => selectModelVariant(m.key, m.name);
+            optsEl.appendChild(div);
+            if (m.active) {
+                if (textEl) textEl.textContent = m.name;
+                if (selEl)  selEl.setAttribute('data-value', m.key);
+            }
+        });
+    } catch (e) {
+        console.warn('loadModelVariants failed:', e);
+    }
+}
+
+async function selectModelVariant(value, label) {
+    const dropdown = document.getElementById('model-variant-dropdown');
+    const selected = dropdown.querySelector('.dropdown-selected');
+    const selectedText = selected.querySelector('.selected-text');
+
+    selected.setAttribute('data-value', value);
+    selectedText.textContent = label;
+    dropdown.querySelectorAll('.dropdown-option').forEach(opt => {
+        opt.classList.toggle('selected', opt.getAttribute('data-value') === value);
+    });
+    dropdown.classList.remove('open');
+
+    // Switch variant on the backend, then restart the engine so it loads the
+    // newly selected model (downloads on first use). We reuse the existing
+    // setup-progress UI so the user sees download/loading feedback.
+    const res = await window.pywebview.api.set_model_variant(value);
+    if (!res || res.status !== 'ok') {
+        onBonsaiSetupProgress('error', -1,
+            (res && res.message) || 'Could not switch model.');
+        return;
+    }
+    if (res.restart_required) {
+        onBonsaiSetupProgress('starting', 0, 'Switching model…');
+        try { await window.pywebview.api.stop_bonsai(); } catch (e) {}
+        _bonsaiSetupTriggered = false;
+        await triggerBonsaiAutoSetup();
+    }
 }
 
 // ========================================
@@ -790,7 +920,7 @@ async function triggerBonsaiAutoSetup() {
     try {
         const status = await window.pywebview.api.get_local_model_status();
         if (status.server_running) {
-            onBonsaiSetupProgress('ready', 100, 'Paramodus is ready');
+            onBonsaiSetupProgress('ready', 100, 'Model is ready');
             return;
         }
     } catch (e) { /* ignore — pywebview not ready yet */ }
@@ -820,12 +950,13 @@ function onBonsaiSetupProgress(phase, pct, msg) {
         // Download done, server loading — dismiss overlay, show status dot
         overlay.classList.remove('visible');
         dot.className    = 'status-dot status-busy';
-        text.textContent = 'Loading model… (may take 2–5 min first time)';
+        const _t = I18N[_currentLang] || I18N.en;
+        text.textContent = _t.modelLoading;
 
     } else if (phase === 'ready') {
         overlay.classList.remove('visible');
         dot.className    = 'status-dot status-online';
-        text.textContent = 'Paramodus is ready';
+        text.textContent = 'Model is ready';
         _bonsaiSetupTriggered = false;
 
     } else if (phase === 'error') {

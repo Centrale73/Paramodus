@@ -1,8 +1,8 @@
 """
-app.py — BonsaiChat pywebview API bridge.
+api/bridge.py — Paramodus pywebview API bridge.
 
 Exposes all methods the HTML/JS frontend calls via window.pywebview.api.
-Adapted from Paramodus' bridge but targeting BonsaiChat's simpler, local-only
+Paramodus pywebview API bridge — local-only
 backend (llama-server + Agno + LanceDB RAG — no cloud provider switching).
 """
 
@@ -51,6 +51,34 @@ def _agent_module():
 # Server path helpers
 # ---------------------------------------------------------------------------
 
+# prism-ml ships three Q1_0 (1-bit) variants. 8B is the most capable; 1.7B is
+# the "fast mode" that runs 3-4x faster on low-end CPUs. The variant is chosen
+# via the BONSAI_MODEL env var ("8b" | "4b" | "1.7b"), which the Settings UI
+# sets through set_model_variant() below. Defaults to 8b for back-compat.
+# Each size is published in its OWN Hugging Face repo (prism-ml/Bonsai-<N>-gguf),
+# and the Q1_0 (1-bit) quant inside is named Bonsai-<N>-Q1_0.gguf. 'file' is the
+# local on-disk name we resolve in models/; 'repo'/'hf' build the download URL.
+_BONSAI_VARIANTS = {
+    "8b":  {"file": "Bonsai-8B.gguf",   "repo": "prism-ml/Bonsai-8B-gguf",   "hf": "Bonsai-8B-Q1_0.gguf",   "label": "Bonsai 8B"},
+    "4b":  {"file": "Bonsai-4B.gguf",   "repo": "prism-ml/Bonsai-4B-gguf",   "hf": "Bonsai-4B-Q1_0.gguf",   "label": "Bonsai 4B"},
+    "1.7b":{"file": "Bonsai-1.7B.gguf", "repo": "prism-ml/Bonsai-1.7B-gguf", "hf": "Bonsai-1.7B-Q1_0.gguf", "label": "Bonsai 1.7B (fast)"},
+}
+
+
+def _active_variant() -> str:
+    v = (os.environ.get("BONSAI_MODEL") or "8b").strip().lower()
+    return v if v in _BONSAI_VARIANTS else "8b"
+
+
+def _model_filename() -> str:
+    return _BONSAI_VARIANTS[_active_variant()]["file"]
+
+
+def _model_download_url() -> str:
+    meta = _BONSAI_VARIANTS[_active_variant()]
+    return f"https://huggingface.co/{meta['repo']}/resolve/main/{meta['hf']}"
+
+
 def _get_server_paths():
     """
     Finds the llama-server binary and the GGUF model.
@@ -78,13 +106,15 @@ def _get_server_paths():
         llama_bin = internal_bin
 
     # --- MODELS ---
+    # Filename depends on the active variant (8b / 4b / 1.7b).
+    model_file = _model_filename()
     # Check next to the EXE first
-    local_model = os.path.join(exe_dir, "models", "Bonsai-8B.gguf")
+    local_model = os.path.join(exe_dir, "models", model_file)
     # Check internal _MEIPASS
-    internal_model = get_resource_path(os.path.join("models", "Bonsai-8B.gguf"))
+    internal_model = get_resource_path(os.path.join("models", model_file))
     # Also check AppData for previously downloaded models
     appdata_dir = os.path.join(os.environ.get('APPDATA', os.path.expanduser('~')), "Paramodus", "models")
-    appdata_model = os.path.join(appdata_dir, "Bonsai-8B.gguf")
+    appdata_model = os.path.join(appdata_dir, model_file)
     
     if os.path.exists(local_model):
         model_path = local_model
@@ -95,6 +125,146 @@ def _get_server_paths():
         
     return llama_bin, model_path
 
+
+# ---------------------------------------------------------------------------
+# Adaptive llama-server launch flags
+# ---------------------------------------------------------------------------
+
+def _total_ram_gb() -> float:
+    """Best-effort total system RAM in GB, stdlib only (no psutil)."""
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class _MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            stat = _MEMORYSTATUSEX()
+            stat.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stat))
+            return stat.ullTotalPhys / (1024 ** 3)
+        # POSIX (Linux/macOS)
+        if hasattr(os, "sysconf") and "SC_PHYS_PAGES" in os.sysconf_names:
+            return (os.sysconf("SC_PHYS_PAGES") * os.sysconf("SC_PAGE_SIZE")) / (1024 ** 3)
+    except Exception:
+        pass
+    return 8.0  # conservative fallback
+
+
+def _detect_discrete_gpu_layers() -> int:
+    """Return a sensible -ngl value based on detected hardware.
+
+    Policy (see PR discussion): default to CPU (0). Only offload when a
+    *discrete* GPU with real dedicated VRAM is present. Integrated GPUs
+    (Intel HD/UHD/Iris, AMD Radeon Vega iGPU) share system RAM and are
+    NOT worth offloading an 8B model to — that was the original -ngl 99
+    bug on the Intel HD 530. An explicit BONSAI_NGL env var always wins.
+    """
+    env = os.environ.get("BONSAI_NGL")
+    if env is not None:
+        try:
+            return int(env)
+        except ValueError:
+            pass
+
+    # NVIDIA: if nvidia-smi reports VRAM, it's a real discrete GPU.
+    try:
+        out = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=4,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            vram_mb = max(int(x) for x in out.stdout.split() if x.strip().isdigit())
+            if vram_mb >= 4000:
+                return 99   # offload everything we can
+            if vram_mb >= 2000:
+                return 20   # partial offload for small dGPUs
+    except Exception:
+        pass
+
+    # Windows: inspect adapters; only trust NON-integrated names with real RAM.
+    if os.name == "nt":
+        try:
+            out = subprocess.run(
+                ["wmic", "path", "win32_VideoController",
+                 "get", "Name,AdapterRAM", "/format:csv"],
+                capture_output=True, text=True, timeout=5,
+            )
+            integrated = ("intel", "hd graphics", "uhd graphics", "iris", "vega", "radeon graphics")
+            best_vram = 0
+            for line in out.stdout.splitlines():
+                parts = [p.strip() for p in line.split(",")]
+                if len(parts) < 3:
+                    continue
+                ram_s, name = parts[1], parts[2].lower()
+                if not ram_s.isdigit():
+                    continue
+                if any(tag in name for tag in integrated):
+                    continue  # iGPU -> never offload
+                best_vram = max(best_vram, int(ram_s) // (1024 ** 2))
+            if best_vram >= 4000:
+                return 99
+            if best_vram >= 2000:
+                return 20
+        except Exception:
+            pass
+
+    return 0  # CPU-only: correct for iGPU / no-GPU machines
+
+
+def _detect_launch_flags() -> dict:
+    """Adaptive llama-server flags scaled to the host hardware.
+
+    All values are overridable via env vars (BONSAI_NGL / BONSAI_THREADS /
+    BONSAI_CTX / BONSAI_BATCH) so power users can A/B test without code
+    changes. Designed to 'just work' across machines: tiny laptops get a
+    conservative CPU config; a box with a real discrete GPU auto-offloads.
+    """
+    logical = os.cpu_count() or 4
+    # llama.cpp generally prefers physical cores; HT logical threads contend
+    # for the same FP units. Estimate physical as half of logical (>2), capped.
+    threads = logical if logical <= 2 else max(2, logical // 2)
+    threads = min(threads, 8)
+
+    ram_gb = _total_ram_gb()
+    if ram_gb <= 8:
+        # low-RAM: weights are only ~1.1 GB (Q1_0), so a 4096-token KV cache
+        # (~0.6 GB) fits comfortably alongside the OS. Crucially, we must NOT
+        # let llama.cpp auto-fit (-c 0) here: it tries the model's full 64K
+        # native context, computes a ~9 GB KV cache, and aborts on an 8 GB box.
+        ctx, batch = 4096, 256
+    elif ram_gb <= 16:
+        ctx, batch = 8192, 512
+    else:
+        ctx, batch = 16384, 512
+
+    ngl = _detect_discrete_gpu_layers()
+
+    # Env overrides (power-user escape hatch).
+    def _env_int(name, default):
+        try:
+            return int(os.environ[name])
+        except (KeyError, ValueError):
+            return default
+
+    return {
+        "ngl": ngl,
+        "threads": _env_int("BONSAI_THREADS", threads),
+        "ctx": _env_int("BONSAI_CTX", ctx),
+        "batch": _env_int("BONSAI_BATCH", batch),
+        "ram_gb": round(ram_gb, 1),
+        "logical_cpus": logical,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -171,7 +341,9 @@ class ApiBridge:
     # ------------------------------------------------------------------
 
     def set_language(self, language: str):
+        """Persist language selection — updates env var so agent picks it up."""
         self.current_language = language
+        os.environ["PARAMODUS_LANGUAGE"] = language
         return {"status": "success"}
 
     # ------------------------------------------------------------------
@@ -222,22 +394,42 @@ class ApiBridge:
                     import crm.scheduler
                     crm.scheduler.GOOGLE_CALENDAR_ENABLED = val
             
-            # If any are true, trigger auth
+            # If any are true, trigger auth. run_local_server() BLOCKS until the
+            # user finishes (or abandons) the browser consent screen, so we must
+            # NOT run it on the pywebview API thread — doing so freezes the whole
+            # window (and can deadlock WebView2) until consent completes. Run it
+            # on a daemon thread so the UI stays responsive and returns instantly.
             if any(settings.values()):
-                from crm.google_auth import trigger_auth
-                trigger_auth()
-                
-                if settings.get("google_calendar_enabled"):
-                    from crm import start_scheduler
-                    start_scheduler()
-                    
-            return {"status": "success", "settings": settings}
+                def _auth_then_schedule():
+                    try:
+                        from crm.google_auth import trigger_auth
+                        trigger_auth()
+                        if settings.get("google_calendar_enabled"):
+                            from crm import start_scheduler
+                            start_scheduler()
+                    except Exception as e:
+                        print(f"[CRM Auth] Background auth failed: {e}")
+
+                threading.Thread(target=_auth_then_schedule,
+                                 daemon=True, name="google-oauth").start()
+
+            return {"status": "success", "settings": settings,
+                    "auth_started": any(settings.values())}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
     # ------------------------------------------------------------------
     # CRM — exposed to JS via window.pywebview.api
     # ------------------------------------------------------------------
+
+    def get_followups_due(self):
+        """Return all contacts_log entries whose follow_up_date is today or overdue."""
+        try:
+            from crm.db import get_followups_due
+            followups = get_followups_due()
+            return {"followups": followups}
+        except Exception as e:
+            return {"followups": [], "error": str(e)}
 
     def get_urgent_events(self):
         """Return all events with urgency tags for the current month."""
@@ -283,69 +475,217 @@ class ApiBridge:
             return {"status": "error", "message": str(e)}
 
     def get_org_emails(self, org_id: int, limit: int = 5):
-        """Suivi des courriels: return recent Gmail messages for an organisation.
-
-        Looks up the organisation's contact_email, then queries Gmail
-        (read-only) for the most recent messages from that address. Requires
-        the Gmail toggle to be enabled and credentials.json + an authorised
-        token to be present. Never raises to JS — returns a status dict.
+        """
+        Return recent email interactions for an organisation.
+        Tries Gmail first (if GOOGLE_GMAIL_ENABLED=true and credentials present),
+        falls back to the local email log stored in local_integrations.db.
         """
         try:
-            # Respect the Gmail read-only toggle.
-            if os.environ.get("GOOGLE_GMAIL_ENABLED", "false").lower() != "true":
-                return {
-                    "status": "error",
-                    "message": "Gmail (lecture seule) n'est pas activé. Activez-le dans Réglages.",
-                }
-
             from crm.db import get_organisation
             org = get_organisation(org_id)
             if not org:
                 return {"status": "error", "message": "Organisme introuvable."}
 
             email = (org.get("contact_email") or "").strip()
-            if not email:
-                return {
-                    "status": "error",
-                    "message": "Aucune adresse courriel enregistrée pour cet organisme.",
-                }
+            lim = max(1, min(int(limit or 5), 20))
 
-            from crm.google_tools import _get_service
-            service = _get_service("gmail", "v1")
-            if not service:
-                return {
-                    "status": "error",
-                    "message": "Gmail indisponible : identifiants manquants ou autorisation requise.",
-                    "email": email,
-                }
+            # ── Try Gmail if enabled + credentials present ──────────────────────
+            gmail_on = os.environ.get("GOOGLE_GMAIL_ENABLED", "").lower() in ("1", "true", "yes")
+            if gmail_on and email:
+                try:
+                    from crm.google_tools import _get_service
+                    service = _get_service("gmail", "v1")
+                    if service:
+                        query = f"from:{email} OR to:{email}"
+                        listing = service.users().messages().list(
+                            userId="me", q=query, maxResults=lim
+                        ).execute()
+                        msgs = listing.get("messages", [])
+                        emails = []
+                        for msg in msgs:
+                            data = service.users().messages().get(
+                                userId="me", id=msg["id"], format="metadata",
+                                metadataHeaders=["Subject", "From", "Date"],
+                            ).execute()
+                            hdrs = data.get("payload", {}).get("headers", [])
+                            emails.append({
+                                "subject": next((h["value"] for h in hdrs if h["name"] == "Subject"), "(sans objet)"),
+                                "from":    next((h["value"] for h in hdrs if h["name"] == "From"), ""),
+                                "date":    next((h["value"] for h in hdrs if h["name"] == "Date"), ""),
+                                "snippet": data.get("snippet", ""),
+                            })
+                        return {"status": "success", "emails": emails, "email": email, "source": "gmail"}
+                except Exception as gmail_err:
+                    print(f"[Bridge] Gmail fetch failed, falling back to local: {gmail_err}")
 
-            try:
-                lim = max(1, min(int(limit or 5), 20))
-            except (TypeError, ValueError):
-                lim = 5
+            # ── Local fallback ─────────────────────────────────────────────────
+            from crm.local_integrations import get_local_emails
+            local_emails = get_local_emails(org_id, limit=lim)
+            return {
+                "status": "success",
+                "emails": local_emails,
+                "email":  email,
+                "source": "local",
+                "note":   "Affichage des courriels saisis manuellement. Activez Gmail dans Reglages pour la synchronisation automatique.",
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
-            # Pull messages from OR to this address (full thread visibility).
-            query = f"from:{email} OR to:{email}"
-            listing = service.users().messages().list(
-                userId="me", q=query, maxResults=lim
-            ).execute()
-            messages = listing.get("messages", [])
+    def add_local_email(self, org_id: int, subject: str, body: str = "",
+                        from_addr: str = "", to_addr: str = "", notes: str = ""):
+        """Manually log an email interaction for an organisation."""
+        try:
+            from crm.local_integrations import add_local_email
+            eid = add_local_email(
+                org_id=int(org_id),
+                subject=subject,
+                from_addr=from_addr,
+                to_addr=to_addr,
+                body=body,
+                notes=notes,
+            )
+            return {"status": "success", "id": eid}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
-            emails = []
-            for msg in messages:
-                data = service.users().messages().get(
-                    userId="me", id=msg["id"], format="metadata",
-                    metadataHeaders=["Subject", "From", "Date"],
-                ).execute()
-                headers = data.get("payload", {}).get("headers", [])
-                emails.append({
-                    "subject": next((h["value"] for h in headers if h["name"] == "Subject"), "(sans objet)"),
-                    "from": next((h["value"] for h in headers if h["name"] == "From"), ""),
-                    "date": next((h["value"] for h in headers if h["name"] == "Date"), ""),
-                    "snippet": data.get("snippet", ""),
-                })
+    def add_calendar_event(self, title: str, start_dt: str, end_dt: str, notes: str = ""):
+        """
+        Create a calendar event.
+        Tries Google Calendar first if enabled, falls back to local SQLite store.
+        """
+        try:
+            gcal_on = os.environ.get("GOOGLE_CALENDAR_ENABLED", "").lower() in ("1", "true", "yes")
+            if gcal_on:
+                try:
+                    from crm.google_auth import get_google_service
+                    service = get_google_service("calendar", "v3")
+                    if service:
+                        body = {
+                            "summary":     title,
+                            "description": notes,
+                            "start": {"dateTime": start_dt, "timeZone": "America/Montreal"},
+                            "end":   {"dateTime": end_dt,   "timeZone": "America/Montreal"},
+                            "reminders": {"useDefault": True},
+                        }
+                        created = service.events().insert(calendarId="primary", body=body).execute()
+                        return {
+                            "status": "success",
+                            "source": "google",
+                            "link":   created.get("htmlLink", ""),
+                        }
+                except Exception as gcal_err:
+                    print(f"[Bridge] Google Calendar failed, saving locally: {gcal_err}")
 
-            return {"status": "success", "emails": emails, "email": email}
+            # Local fallback
+            from crm.local_integrations import add_local_calendar_event
+            eid = add_local_calendar_event(title=title, start_dt=start_dt, end_dt=end_dt, notes=notes)
+            return {"status": "success", "source": "local", "id": eid}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def get_local_reminders(self):
+        """Return unread scheduler reminders stored in local_integrations.db."""
+        try:
+            from crm.local_integrations import get_unread_reminders
+            reminders = get_unread_reminders()
+            return {"status": "success", "reminders": reminders}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def acknowledge_reminder(self, reminder_id: int):
+        """Mark a local reminder as read/dismissed."""
+        try:
+            from crm.local_integrations import acknowledge_reminder
+            acknowledge_reminder(int(reminder_id))
+            return {"status": "success"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def update_event_meta(self, event_id: int, fit_cirkanime=None, contact_status=None):
+        """Update fit rating (0-5) and/or contact status on an event."""
+        try:
+            from crm.db import update_event_meta
+            ok = update_event_meta(
+                event_id=int(event_id),
+                fit_cirkanime=int(fit_cirkanime) if fit_cirkanime is not None else None,
+                contact_status=str(contact_status) if contact_status is not None else None,
+            )
+            return {"status": "success" if ok else "not_found"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def delete_crm_event(self, event_id: int):
+        """Delete a CRM event row by id."""
+        try:
+            from crm.db import delete_event
+            deleted = delete_event(int(event_id))
+            if deleted:
+                return {"status": "success"}
+            return {"status": "error", "message": "Event not found."}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def delete_calendar_event(self, event_id: int):
+        """Delete a calendar event row by id (alias for CRM events table)."""
+        return self.delete_crm_event(event_id)
+
+    def parse_csv_preview(self, base64_csv: str) -> dict:
+        """Decode a base64-encoded CSV and return parsed columns + row count for the preview banner.
+        Pure Python path — no agent call, just metadata so the JS can show the confirm prompt."""
+        try:
+            import base64 as _b64
+            import csv, io
+            raw  = _b64.b64decode(base64_csv).decode("utf-8", errors="replace")
+            reader = csv.reader(io.StringIO(raw))
+            rows   = list(reader)
+            if not rows:
+                return {"status": "error", "message": "Empty file."}
+            headers  = rows[0]
+            data     = rows[1:]
+            return {
+                "status":  "success",
+                "columns": headers,
+                "rows":    data,
+                "row_count": len(data),
+            }
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    def table_delegate_query(self, markdown_table: str):
+        """Parse a markdown table from the Table panel and forward to the agent."""
+        try:
+            prompt = (
+                "The user has submitted a structured data table for analysis. "
+                "Parse it and respond with insights, summaries, or actions as appropriate.\n\n"
+                f"{markdown_table}"
+            )
+            # Reuse the existing stream pathway synchronously via a simple queue
+            result_chunks = []
+            done_event = threading.Event()
+
+            def _collect(chunk, *args):
+                result_chunks.append(chunk)
+
+            # Run a non-streaming call via the agent directly
+            import asyncio as _asyncio
+            mod = _agent_module()
+            agent = mod.get_or_create_agent(
+                session_id="table-delegate",
+                space_instructions=None,
+                language=getattr(self, "current_language", "en"),
+            )
+            loop = _asyncio.new_event_loop()
+            resp = loop.run_until_complete(
+                agent.arun(prompt, stream=False)
+            )
+            loop.close()
+            reply = resp.content if hasattr(resp, "content") else str(resp)
+            # Push reply to the chat UI as a bot message
+            if self._window:
+                self._window.evaluate_js(
+                    f"appendMessage('bot', {repr(reply)})"
+                )
+            return {"status": "success"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
@@ -361,14 +701,38 @@ class ApiBridge:
         }
 
     def get_bonsai_models(self) -> list:
-        return [
-            {
-                "key": "bonsai-8b",
-                "name": "Paramodus 8B",
-                "description": "1-bit quantized LLM — runs entirely on CPU",
+        """List all selectable 1-bit variants for the Settings UI."""
+        active = _active_variant()
+        out = []
+        for key, meta in _BONSAI_VARIANTS.items():
+            out.append({
+                "key": key,
+                "name": meta["label"],
+                "description": {
+                    "8b": "Most capable. ~4-8 tok/s on an older CPU.",
+                    "4b": "Balanced. Roughly 2x faster than 8B.",
+                    "1.7b": "Fast mode. 3-4x faster; best for low-end hardware.",
+                }.get(key, "1-bit quantized LLM — runs entirely on CPU"),
+                "active": key == active,
+            })
+        return out
+
+    def get_model_variant(self) -> str:
+        """Return the currently selected variant key (8b/4b/1.7b)."""
+        return _active_variant()
+
+    def set_model_variant(self, key: str) -> dict:
+        """Switch the active 1-bit variant. Takes effect on next server start;
+        the caller should stop_bonsai() then begin_auto_setup() to apply it.
+        Persisted via the BONSAI_MODEL env var for this process."""
+        key = (key or "").strip().lower()
+        if key not in _BONSAI_VARIANTS:
+            return {"status": "error",
+                    "message": f"Unknown variant '{key}'. Choose 8b, 4b, or 1.7b."}
+        os.environ["BONSAI_MODEL"] = key
+        return {"status": "ok", "active": key,
                 "downloaded": self._is_model_present(),
-            }
-        ]
+                "restart_required": True}
 
     def _is_model_present(self) -> bool:
         _, model_path = _get_server_paths()
@@ -425,21 +789,52 @@ class ApiBridge:
             # 2. Model check
             if not os.path.isfile(model_path):
                 _report("downloading", 0, "Model not found. Starting download from Hugging Face...")
-                model_url = "https://huggingface.co/prism-ml/Bonsai-8B-gguf/resolve/main/Bonsai-8B.gguf"
+                # IMPORTANT: fetch the Q1_0 (1-bit, ~1 GB) quant for the active
+                # variant — NOT the repo's default F16 master (~16 GB), which
+                # won't fit in RAM. The Q1_0 file is what makes Bonsai 1-bit at
+                # runtime. URL tracks the BONSAI_MODEL variant (8b/4b/1.7b).
+                model_url = _model_download_url()
                 success = self._download_model(model_url, model_path, _report)
                 if not success:
                     return # Error already reported by helper
 
-            # 3. Start server
-            _report("starting", 0, "Loading model into memory…")
+            # 3. Start server with hardware-adaptive flags.
+            flags = _detect_launch_flags()
+            gpu_desc = (f"GPU offload ({flags['ngl']} layers)"
+                        if flags["ngl"] > 0 else "CPU")
+            _report("starting", 0,
+                    f"Loading model… {gpu_desc}, {flags['threads']} threads, "
+                    f"ctx {flags['ctx']} ({flags['ram_gb']} GB RAM)")
 
-            command = [
-                llama_bin,
-                "-m", model_path,
-                "--host", "127.0.0.1",
-                "--port", "8081",
-                "-ngl", "99",
-            ]
+            def _build_command(ctx_value):
+                """ctx_value: '0' for auto-fit, or a concrete token count string."""
+                return [
+                    llama_bin,
+                    "-m", model_path,
+                    "--host", "127.0.0.1",
+                    "--port", "8081",
+                    "-ngl", str(flags["ngl"]),
+                    "-t", str(flags["threads"]),
+                    "-c", str(ctx_value),
+                    "-b", str(flags["batch"]),
+                    # Bonsai (Qwen3-based) recommended sampler, from prism-ml's
+                    # canonical start_llama_server.ps1.
+                    "--temp", "0.5",
+                    "--top-p", "0.85",
+                    "--top-k", "20",
+                    "--min-p", "0",
+                    # Disable hidden "thinking" tokens — Bonsai is a Qwen3 model
+                    # and will otherwise burn time reasoning before every reply,
+                    # which on CPU feels like the app is frozen. Biggest
+                    # perceived-latency win on low-end hardware.
+                    "--reasoning-budget", "0",
+                    "--reasoning-format", "none",
+                    # NOTE: older prism-ml builds took
+                    # --chat-template-kwargs '{"enable_thinking": false}',
+                    # but build b8846+ deprecated that and ignores it (thinking
+                    # stays ON). The current binary wants --reasoning off.
+                    "--reasoning", "off",
+                ]
 
             startupinfo = None
             if os.name == "nt":
@@ -447,39 +842,72 @@ class ApiBridge:
                 startupinfo = _sp.STARTUPINFO()
                 startupinfo.dwFlags |= _sp.STARTF_USESHOWWINDOW
 
-            try:
-                self._server_process = subprocess.Popen(
-                    command,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    startupinfo=startupinfo,
-                    text=True,
-                    bufsize=1,
-                )
+            # Context strategy. -c 0 (auto-fit) is convenient on big machines
+            # but DANGEROUS on low-RAM boxes: it sizes the KV cache for the
+            # model's full 64K native context (~9 GB) and aborts before it ever
+            # listens. So only attempt auto-fit when there's plenty of RAM;
+            # otherwise go straight to the fixed, hardware-scaled context.
+            if flags["ram_gb"] > 16:
+                ctx_attempts = ["0", str(flags["ctx"])]
+            else:
+                ctx_attempts = [str(flags["ctx"])]
+            for attempt_idx, ctx_value in enumerate(ctx_attempts):
+                command = _build_command(ctx_value)
+                ctx_label = "auto-fit" if ctx_value == "0" else f"ctx {ctx_value}"
+                _report("starting", 0, f"Loading model… {ctx_label}")
+                saw_ctx_error = False
+                try:
+                    self._server_process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.STDOUT,
+                        startupinfo=startupinfo,
+                        text=True,
+                        bufsize=1,
+                    )
 
-                for line in self._server_process.stdout:
-                    stripped = line.strip()
-                    if stripped:
-                        _report("starting", 0, stripped[:90])
+                    for line in self._server_process.stdout:
+                        stripped = line.strip()
+                        if stripped:
+                            _report("starting", 0, stripped[:90])
 
-                    if "HTTP server error" in line:
-                        _report("error", -1,
-                                "Server failed to start — port 8081 may be in use.")
-                        return
+                        low = line.lower()
+                        # Signs the context flag was rejected by this build.
+                        if ("-c 0" in low or "ctx" in low) and (
+                            "unknown" in low or "invalid" in low or "unsupported" in low
+                        ):
+                            saw_ctx_error = True
 
-                    if "server is listening on" in line:
-                        self._server_ready = True
-                        # Init the Agno agent now that the server is up
-                        try:
-                            _agent_module().init_agent()
-                        except Exception as e:
-                            _report("error", -1, f"Agent init failed: {e}")
+                        if "HTTP server error" in line:
+                            _report("error", -1,
+                                    "Server failed to start — port 8081 may be in use.")
                             return
-                        _report("ready", 100, "Paramodus is ready")
-                        return
 
-            except Exception as e:
-                _report("error", -1, f"Failed to launch server: {e}")
+                        if "server is listening on" in line:
+                            self._server_ready = True
+                            try:
+                                _agent_module().init_agent()
+                            except Exception as e:
+                                _report("error", -1, f"Agent init failed: {e}")
+                                return
+                            _report("ready", 100, "Bonsai is ready")
+                            return
+
+                    # stdout closed without "listening" -> process exited early.
+                    can_retry = attempt_idx + 1 < len(ctx_attempts)
+                    if can_retry and (saw_ctx_error or ctx_value == "0"):
+                        _report("starting", 0,
+                                "Auto-fit context not supported — retrying with a "
+                                "fixed context size…")
+                        continue
+                    _report("error", -1,
+                            "Server exited before it was ready. Check that "
+                            "bin/llama-server.exe is the prism-ml Q1_0 build and "
+                            "models/Bonsai-8B.gguf is the Q1_0 quant.")
+                    return
+                except Exception as e:
+                    _report("error", -1, f"Failed to launch server: {e}")
+                    return
 
         threading.Thread(target=_worker, daemon=True, name="bonsai-server").start()
         return {"status": "started"}

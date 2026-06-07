@@ -6,6 +6,75 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Paramodus</title>
     <link rel="stylesheet" href="css/style.css">
+    <style>
+        /* ── Calendar inline event-form ─────────────────────────────── */
+        #cal-event-form {
+            display: none;
+            margin-top: 14px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 10px;
+            padding: 12px;
+            animation: calFormIn 0.18s ease-out;
+        }
+        @keyframes calFormIn {
+            from { opacity: 0; transform: translateY(-6px); }
+            to   { opacity: 1; transform: translateY(0); }
+        }
+        .cal-form-label {
+            display: block;
+            font-size: 0.68rem;
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+            color: var(--text-muted);
+            margin-bottom: 3px;
+        }
+        .cal-form-input {
+            width: 100%;
+            padding: 7px 9px;
+            border-radius: 6px;
+            background: rgba(0,0,0,0.25);
+            border: 1px solid rgba(255,255,255,0.1);
+            color: var(--text-primary);
+            font-size: 0.82rem;
+            outline: none;
+            transition: border-color 0.15s;
+            /* Make the browser's native date/time picker match the dark theme */
+            color-scheme: dark;
+        }
+        .cal-form-input:focus {
+            border-color: var(--accent);
+        }
+        .cal-form-row {
+            display: flex;
+            gap: 8px;
+        }
+        .cal-form-row > div {
+            flex: 1;
+        }
+        .cal-form-field {
+            margin-bottom: 9px;
+        }
+        #cal-form-error {
+            display: none;
+            font-size: 0.75rem;
+            margin-top: 4px;
+            padding: 4px 6px;
+            border-radius: 4px;
+            background: rgba(0,0,0,0.2);
+        }
+        .cal-start-badge {
+            display: inline-block;
+            font-size: 0.72rem;
+            padding: 2px 7px;
+            border-radius: 20px;
+            background: rgba(108,92,231,0.25);
+            color: var(--accent);
+            border: 1px solid rgba(108,92,231,0.35);
+            margin-bottom: 10px;
+        }
+    </style>
 </head>
 
 <body>
@@ -92,7 +161,7 @@
                     </div>
                 </div>
 
-                <!-- Local model: Paramodus panel -->
+                <!-- Local model: Bonsai panel -->
                 <div id="bonsai-panel" style="margin-top: 20px;">
                     <div class="bonsai-status-bar" id="bonsai-status-bar">
                         <span id="bonsai-status-dot" class="status-dot status-offline"></span>
@@ -100,6 +169,20 @@
                     </div>
                     <button id="btn-bonsai-retry" class="btn-bonsai-retry" style="display:none;"
                         onclick="retryBonsaiSetup()">↺ Retry</button>
+
+                    <!-- Model variant selector (8B / 4B / 1.7B fast mode) -->
+                    <label class="config-label" style="margin-top:14px; display:block;">Model size</label>
+                    <div class="custom-dropdown" id="model-variant-dropdown">
+                        <div class="dropdown-selected" data-value="8b" onclick="toggleModelVariantDropdown()">
+                            <span class="selected-text" id="model-variant-text">Bonsai 8B</span>
+                        </div>
+                        <div class="dropdown-options" id="model-variant-options">
+                            <!-- populated by loadModelVariants() -->
+                        </div>
+                    </div>
+                    <div style="margin-top:6px; font-size:0.7rem; color:#888; line-height:1.4;">
+                        Smaller models run faster on low-end hardware. Switching downloads the new model on first use and restarts the engine.
+                    </div>
                 </div>
             </div>
 
@@ -114,7 +197,7 @@
 
             <button class="btn-clear" onclick="clearRag()">Clear Context</button>
 
-            <div class="attribution" style="margin-top: 30px; font-size: 0.7rem; color: #666; font-family: monospace; line-height: 1.3; border-top: 1px solid #333; padding-top: 15px; white-space: pre-wrap; word-wrap: break-word;">Paramodus incorporates the Bonsai 8B model.
+            <div class="attribution" style="margin-top: 30px; font-size: 0.7rem; color: #666; font-family: monospace; line-height: 1.3; border-top: 1px solid #333; padding-top: 15px; white-space: pre-wrap; word-wrap: break-word;">Paramodus is a local interface for the Bonsai model by PrismML. Bonsai is a trademark of PrismML; this project is an independent integration and is not affiliated with or endorsed by PrismML.
 Copyright (c) 2026 PrismML.
 
 This product includes software developed by PrismML (https://prismml.com).
@@ -140,26 +223,32 @@ limitations under the License.</div>
 
             <!-- Filter bar -->
             <div style="display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap;">
-                <button class="crm-filter-btn active" onclick="crmSetFilter('all', this)">All</button>
-                <button class="crm-filter-btn" onclick="crmSetFilter('green', this)">🟢 Now</button>
-                <button class="crm-filter-btn" onclick="crmSetFilter('yellow', this)">🟡 Soon</button>
-                <button class="crm-filter-btn" onclick="crmSetFilter('red', this)">🔴 Passed</button>
+                <button class="crm-filter-btn active" onclick="crmSetFilter('all', this)">Tous</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('green', this)">🟢 Ce mois</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('yellow', this)">🟡 Bientôt</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('red', this)">🔴 Passés</button>
+                <button class="crm-filter-btn" onclick="crmSetFilter('followup', this)">🔔 Relances</button>
             </div>
 
             <!-- Events table -->
             <div id="crm-table-container" style="overflow-x:auto;">
                 <table id="crm-table" style="width:100%; border-collapse:collapse; font-size:0.78rem;">
                     <thead>
-                        <tr style="color:var(--text-muted); text-align:left; border-bottom:1px solid rgba(255,255,255,0.08);">
-                            <th style="padding:6px 4px;">●</th>
+                        <tr style="color:var(--text-muted); text-align:left; border-bottom:1px solid rgba(255,255,255,0.08); font-size:0.72rem;">
+                            <th style="padding:6px 4px; width:20px;" title="Urgence">&#9679;</th>
                             <th style="padding:6px 4px;">Ville</th>
                             <th style="padding:6px 4px;">Événement</th>
+                            <th style="padding:6px 4px;">Type</th>
+                            <th style="padding:6px 4px;">Période</th>
                             <th style="padding:6px 4px;">Contacter</th>
-                            <th style="padding:6px 4px;">Actions</th>
+                            <th style="padding:6px 4px; width:24px; text-align:center;" title="Statut">&#9679;</th>
+                            <th style="padding:6px 4px;" title="Fit CIRKANIME">Fit</th>
+                            <th style="padding:6px 4px;">Notes</th>
+                            <th style="padding:6px 4px; width:72px;">Actions</th>
                         </tr>
                     </thead>
                     <tbody id="crm-table-body">
-                        <tr><td colspan="5" style="padding:20px; text-align:center; color:var(--text-muted);">Loading…</td></tr>
+                        <tr><td colspan="10" style="padding:20px; text-align:center; color:var(--text-muted);">Loading…</td></tr>
                     </tbody>
                 </table>
             </div>
@@ -195,6 +284,85 @@ limitations under the License.</div>
             </div>
         </div>
 
+        <!-- View: Table -->
+        <div id="view-table" class="sidebar-view" style="display:none;">
+
+            <!-- ── CSV Import drop zone ─────────────────────────────────── -->
+            <div id="table-csv-dropzone"
+                 onclick="document.getElementById('table-csv-input').click()"
+                 ondragover="event.preventDefault();this.classList.add('table-dz-hover')"
+                 ondragleave="this.classList.remove('table-dz-hover')"
+                 ondrop="event.preventDefault();this.classList.remove('table-dz-hover');tableHandleCSVDrop(event)"
+                 style="display:flex;align-items:center;gap:8px;padding:8px 10px;
+                        border:1px dashed rgba(255,255,255,0.15);border-radius:8px;
+                        cursor:pointer;margin-bottom:10px;transition:border-color 0.15s,background 0.15s;">
+                <!-- mini CSV-doc icon -->
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                     stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"
+                     style="flex-shrink:0;color:var(--accent);">
+                    <path d="M4 4a2 2 0 0 1 2-2h8l4 4v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4z"/>
+                    <polyline points="14 2 14 6 18 6" stroke-width="1.8"/>
+                    <line x1="7.5" y1="11" x2="16.5" y2="11"/>
+                    <line x1="7.5" y1="14" x2="16.5" y2="14"/>
+                </svg>
+                <span id="table-dz-label" style="font-size:0.75rem;color:var(--text-muted);pointer-events:none;">
+                    Drop a CSV here &nbsp;or&nbsp; click to import
+                </span>
+            </div>
+            <input type="file" id="table-csv-input" accept=".csv,text/csv" style="display:none"
+                   onchange="tableHandleCSVFile(this.files[0])">
+
+            <!-- ── CSV Preview / Confirm Banner ──────────────────────────── -->
+            <div id="table-csv-preview" style="display:none;margin-bottom:10px;padding:8px 10px;
+                 border-radius:8px;background:rgba(108,92,231,0.08);border:1px solid rgba(108,92,231,0.25);">
+                <div style="font-size:0.72rem;color:var(--accent);font-weight:600;margin-bottom:4px;">
+                    &#9432; CSV detected
+                </div>
+                <div id="table-csv-preview-info"
+                     style="font-size:0.7rem;color:var(--text-muted);margin-bottom:8px;line-height:1.5;"></div>
+                <div style="display:flex;gap:6px;">
+                    <button onclick="tableConfirmCSV()"
+                        style="flex:1;padding:5px 0;border-radius:6px;border:none;
+                               background:var(--accent);color:#fff;cursor:pointer;
+                               font-size:0.75rem;font-weight:600;">
+                        &#10003; Load into Table
+                    </button>
+                    <button onclick="tableDismissCSV()"
+                        style="flex:1;padding:5px 0;border-radius:6px;
+                               border:1px solid rgba(255,255,255,0.12);background:transparent;
+                               color:var(--text-muted);cursor:pointer;font-size:0.75rem;">
+                        Dismiss
+                    </button>
+                </div>
+            </div>
+
+            <!-- ── Column headers editor ─────────────────────────────────── -->
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+                <h4 style="margin:0;font-size:0.9rem;color:var(--text-muted);">Custom Table</h4>
+                <button onclick="tableAddColumn()"
+                    style="background:transparent;border:1px solid rgba(255,255,255,0.12);color:var(--accent);
+                           cursor:pointer;font-size:0.75rem;padding:2px 8px;border-radius:4px;">+ Col</button>
+            </div>
+            <div id="table-headers" style="display:flex;gap:4px;flex-wrap:wrap;margin-bottom:8px;"></div>
+
+            <!-- ── Table grid ─────────────────────────────────────────────── -->
+            <div style="overflow-x:auto;">
+                <table id="custom-table" style="width:100%;border-collapse:collapse;font-size:0.78rem;"></table>
+            </div>
+
+            <!-- ── Action bar ─────────────────────────────────────────────── -->
+            <div style="display:flex;gap:6px;margin-top:8px;">
+                <button onclick="tableAddRow()"
+                    style="flex:1;padding:5px 0;border-radius:6px;border:1px solid rgba(255,255,255,0.12);
+                           background:transparent;color:var(--text-muted);cursor:pointer;font-size:0.78rem;">+ Row</button>
+                <button onclick="tableSendToAgent()"
+                    style="flex:1;padding:5px 0;border-radius:6px;border:1px solid rgba(108,92,231,0.4);
+                           background:rgba(108,92,231,0.15);color:var(--accent);cursor:pointer;font-size:0.78rem;">&#9658; Send to Agent</button>
+            </div>
+            <div id="table-agent-feedback" style="display:none;margin-top:8px;font-size:0.75rem;
+                 padding:4px 6px;border-radius:4px;background:rgba(0,0,0,0.2);"></div>
+        </div>
+
         <!-- View: Calendar -->
         <div id="view-calendar" class="sidebar-view" style="display:none;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
@@ -213,10 +381,77 @@ limitations under the License.</div>
             <!-- Calendar grid -->
             <div id="cal-grid" style="display:grid; grid-template-columns:repeat(7,1fr); gap:2px;"></div>
 
-            <!-- Events for selected day -->
+            <!-- Events for selected day (CRM active events summary) -->
             <div id="cal-day-events" style="margin-top:14px; font-size:0.8rem; color:var(--text-muted); min-height:40px;">
-                Cliquez sur un jour pour voir les événements.
+                Cliquez sur un jour pour créer un événement.
             </div>
+
+            <!-- ── Inline Event-Creation Form ──────────────────────────────── -->
+            <!-- Appears below the calendar grid when a day is clicked.        -->
+            <!-- No modal — all fields render inline in the sidebar.           -->
+            <div id="cal-event-form">
+
+                <!-- Selected start-date badge -->
+                <div style="margin-bottom:8px;">
+                    <span class="cal-start-badge" id="cal-form-start-label">—</span>
+                </div>
+
+                <!-- Hidden: carries the ISO start date (YYYY-MM-DD) set by calSelectDay() -->
+                <input type="hidden" id="cal-form-start-date">
+
+                <!-- Event title -->
+                <div class="cal-form-field">
+                    <label class="cal-form-label" for="cal-form-title">Titre de l'événement</label>
+                    <input id="cal-form-title" type="text" class="cal-form-input"
+                           placeholder="Ex: Réunion Cirkanime" autocomplete="off">
+                </div>
+
+                <!-- Start time (on the selected day) -->
+                <div class="cal-form-field">
+                    <label class="cal-form-label" for="cal-form-start-time">Heure de début</label>
+                    <input id="cal-form-start-time" type="time" class="cal-form-input" value="09:00">
+                </div>
+
+                <!-- End date + end time (may differ from start date) -->
+                <div class="cal-form-row">
+                    <div class="cal-form-field">
+                        <label class="cal-form-label" for="cal-form-end-date">Date de fin</label>
+                        <input id="cal-form-end-date" type="date" class="cal-form-input">
+                    </div>
+                    <div class="cal-form-field">
+                        <label class="cal-form-label" for="cal-form-end-time">Heure de fin</label>
+                        <input id="cal-form-end-time" type="time" class="cal-form-input" value="10:00">
+                    </div>
+                </div>
+
+                <!-- Optional notes -->
+                <div class="cal-form-field">
+                    <label class="cal-form-label" for="cal-form-notes">Notes (optionnel)</label>
+                    <textarea id="cal-form-notes" class="cal-form-input" rows="2"
+                              style="resize:none;" placeholder="Détails supplémentaires…"></textarea>
+                </div>
+
+                <!-- Inline error / success feedback -->
+                <div id="cal-form-error"></div>
+
+                <!-- Action buttons -->
+                <div style="display:flex; gap:8px; margin-top:4px;">
+                    <button id="cal-form-save-btn" onclick="calSaveEvent()"
+                        style="flex:1; padding:8px; border-radius:6px; border:none;
+                               background:var(--accent); color:#fff; cursor:pointer;
+                               font-size:0.82rem; font-weight:600;
+                               transition:opacity 0.15s;">
+                        Enregistrer
+                    </button>
+                    <button onclick="calCancelEvent()"
+                        style="flex:1; padding:8px; border-radius:6px;
+                               border:1px solid rgba(255,255,255,0.1); background:transparent;
+                               color:var(--text-muted); cursor:pointer; font-size:0.82rem;">
+                        Annuler
+                    </button>
+                </div>
+
+            </div><!-- /#cal-event-form -->
         </div>
     </div>
 
@@ -255,6 +490,23 @@ limitations under the License.</div>
                 <line x1="3" y1="10" x2="21" y2="10"/>
             </svg>
         </div>
+        <!-- Table Toggle -->
+        <div class="sidebar-toggle-tab" onclick="toggleSidebar('table')" id="tab-table" title="Table">
+            <!-- Spreadsheet-style icon: document with rows of data -->
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                stroke-linecap="round" stroke-linejoin="round">
+                <!-- Document body -->
+                <path d="M4 4a2 2 0 0 1 2-2h8l4 4v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4z"/>
+                <!-- Folded corner -->
+                <polyline points="14 2 14 6 18 6" stroke-width="1.8"/>
+                <!-- Data rows -->
+                <line x1="7.5" y1="11" x2="16.5" y2="11"/>
+                <line x1="7.5" y1="14" x2="16.5" y2="14"/>
+                <line x1="7.5" y1="17" x2="13" y2="17"/>
+                <!-- Left cell divider -->
+                <line x1="10" y1="9.5" x2="10" y2="18.5" stroke-width="1"/>
+            </svg>
+        </div>
     </div>
 
     <!-- Main Content -->
@@ -285,8 +537,8 @@ limitations under the License.</div>
     <!-- First-run setup overlay -->
     <div id="bonsai-setup-overlay">
         <div class="setup-overlay-inner">
-            <h2 class="setup-heading">Setting up Paramodus AI</h2>
-            <p class="setup-sub">Downloading the model — this only happens once.<br>After this, Paramodus runs fully offline, forever.</p>
+            <h2 class="setup-heading">Setting up Paramodus</h2>
+            <p class="setup-sub">Downloading the Bonsai model — this only happens once.<br>After this, Paramodus runs fully offline, forever.</p>
             <div class="progress-bar-bg setup-progress-bar">
                 <div class="progress-bar-fill" id="setup-overlay-fill" style="width:0%"></div>
             </div>
@@ -351,6 +603,7 @@ limitations under the License.</div>
     <script src="marked.min.js"></script>
     <script src="js/app.js"></script>
     <script src="js/crm_panel.js"></script>
+    <script src="js/table_panel.js"></script>
 </body>
 
 </html>
