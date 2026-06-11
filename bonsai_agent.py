@@ -197,16 +197,18 @@ def init_agent() -> None:
 def get_agent(session_id: str, language: str = 'en') -> Agent:
     """Return the global agent, initialising it if necessary.
 
-    Language is NOT applied here. The agent keeps static BASE_INSTRUCTIONS;
+    session_id is intentionally NOT set on the instance here — doing so would
+    be a race condition on the shared singleton (one thread could overwrite
+    another's session before arun() is called).  Instead, session_id is passed
+    per-run via get_run_kwargs() and spread into agent.arun(**get_run_kwargs(...)).
+
+    Language is also NOT applied here.  The agent keeps static BASE_INSTRUCTIONS;
     per-run language is injected via get_run_kwargs() -> additional_instructions
-    (see _LANGUAGE_INSTRUCTIONS). Mutating the shared singleton's instructions
-    per call was a state-bleed hazard across concurrent sessions, so it was
-    removed. The `language` arg is kept for call-site compatibility.
+    (see _LANGUAGE_INSTRUCTIONS).  The `language` arg is kept for call-site
+    compatibility only.
     """
     if _agent is None:
         init_agent()
-    # Agno agents carry session context via the DB; just tag the run.
-    _agent.session_id = session_id
     return _agent
 
 
