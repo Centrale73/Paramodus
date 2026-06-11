@@ -1,5 +1,5 @@
-<img width="500" height="500" alt="paramodus-removebg-preview" src="https://github.com/user-attachments/assets/a3689918-d738-42e3-b2ad-56d0698b6a93" />
 # Paramodus
+<img width="500" height="500" alt="paramodus-removebg-preview" src="https://github.com/user-attachments/assets/a3689918-d738-42e3-b2ad-56d0698b6a93" />
 
 **Privacy-first, fully offline Windows AI productivity app** powered by the [Bonsai 1-bit LLM](https://prismml.com) and built with Python + pywebview.
 
